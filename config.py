@@ -28,7 +28,7 @@ CARD_NUMBER = os.getenv("CARD_NUMBER", "8600 0000 0000 0000")
 CARD_HOLDER = os.getenv("CARD_HOLDER", "Admin")
 
 # Database
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_GMBZ1vREgK2f@ep-silent-dew-al45o4zi-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require")
 DATABASE_PATH = str(BASE_DIR / os.getenv("DATABASE_PATH", "bot_database.sqlite3"))
 
 # Premium Tariffs
