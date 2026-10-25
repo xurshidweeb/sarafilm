@@ -28,6 +28,7 @@ CARD_NUMBER = os.getenv("CARD_NUMBER", "8600 0000 0000 0000")
 CARD_HOLDER = os.getenv("CARD_HOLDER", "Admin")
 
 # Database
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 DATABASE_PATH = str(BASE_DIR / os.getenv("DATABASE_PATH", "bot_database.sqlite3"))
 
 # Premium Tariffs
