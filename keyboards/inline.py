@@ -220,10 +220,11 @@ def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
         buttons.extend([
             [
                 InlineKeyboardButton(text="👥 Adminlar boshqaruvi", callback_data="admin_manage_admins"),
-                InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings")
+                InlineKeyboardButton(text="💎 Premium a'zolar", callback_data="admin_premium_users")
             ],
             [
-                InlineKeyboardButton(text="⚙️ Matn & Tugmalar sozlamalari", callback_data="admin_settings_menu")
+                InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings"),
+                InlineKeyboardButton(text="⚙️ Matn & Tugmalar", callback_data="admin_settings_menu")
             ],
             [
                 InlineKeyboardButton(text="👑 Egalikni o'tkazish (Transfer Owner)", callback_data="admin_transfer_owner")
@@ -233,6 +234,43 @@ def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="back_to_main")
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_premium_users_kb(users: List[Dict[str, Any]], page: int = 0, per_page: int = 6) -> InlineKeyboardMarkup:
+    """List active premium users with revoke button"""
+    buttons = []
+    start = page * per_page
+    end = start + per_page
+    current_page_users = users[start:end]
+
+    for u in current_page_users:
+        name = u.get("full_name") or u.get("username") or str(u["user_id"])
+        buttons.append([
+            InlineKeyboardButton(text=f"❌ Obunani olish: {name[:18]}", callback_data=f"revoke_prem_confirm:{u['user_id']}")
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"prem_users_page:{page - 1}"))
+    if end < len(users):
+        nav.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"prem_users_page:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    buttons.append([
+        InlineKeyboardButton(text="🔍 ID orqali qidirish", callback_data="find_user_prem_prompt"),
+        InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_menu")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_confirm_revoke_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Confirm revoking premium subscription"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔴 Ha, obunani tortib olish", callback_data=f"do_revoke_prem:{user_id}"),
+            InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_premium_users")
+        ]
+    ])
+
 
 def get_admin_settings_kb() -> InlineKeyboardMarkup:
     """Settings menu for editing bot texts and buttons"""

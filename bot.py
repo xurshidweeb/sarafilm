@@ -151,7 +151,10 @@ async def main():
         try:
             await bot.set_my_commands([
                 BotCommand(command="start", description="Botni ishga tushirish / Yangilash"),
-                BotCommand(command="admin", description="Admin boshqaruv paneli")
+                BotCommand(command="search", description="🔍 Film qidirish"),
+                BotCommand(command="top", description="🎬 Top filmlar"),
+                BotCommand(command="saved", description="⭐ Saqlangan filmlar"),
+                BotCommand(command="premium", description="💎 VIP Obuna")
             ])
             break
         except Exception as e:

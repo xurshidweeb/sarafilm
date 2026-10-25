@@ -2,6 +2,7 @@ import logging
 from aiogram import Router, F, Bot
 from datetime import datetime
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -25,9 +26,7 @@ class PaymentState(StatesGroup):
 class AdminRejectState(StatesGroup):
     waiting_for_reason = State()
 
-@router.callback_query(F.data == "open_subscription")
-async def on_open_subscription(callback: CallbackQuery, db: Database):
-    user_id = callback.from_user.id
+async def get_subscription_view_data(user_id: int, db: Database):
     is_premium = await db.is_user_premium(user_id)
     pending_order = await db.get_pending_order_by_user(user_id)
     settings = await db.get_all_settings()
@@ -75,8 +74,7 @@ async def on_open_subscription(callback: CallbackQuery, db: Database):
             buttons.append([InlineKeyboardButton(text="🕒 Arizam holati", callback_data=f"view_my_order:{pending_order['id']}")])
         buttons.append([InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="back_to_main")])
 
-        await callback.message.edit_text(status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
-        return
+        return status_text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
     base_text = settings.get("premium_text") or (
         "💎 <b>Eng Sara Filmlar Premium</b>\n\n"
@@ -93,9 +91,24 @@ async def on_open_subscription(callback: CallbackQuery, db: Database):
             f"🕒 <b>Sizda ko'rib chiqilayotgan ariza bor</b>\n"
             f"<i>{pending_order['plan_name']} · {price_str} UZS</i>"
         )
-        await callback.message.edit_text(text, reply_markup=get_pending_order_kb(pending_order["id"]), parse_mode="HTML")
+        return text, get_pending_order_kb(pending_order["id"])
     else:
-        await callback.message.edit_text(base_text, reply_markup=get_subscription_kb(), parse_mode="HTML")
+        return base_text, get_subscription_kb()
+
+@router.message(Command("premium"))
+async def cmd_premium(message: Message, db: Database):
+    user = message.from_user
+    await db.add_or_update_user(user.id, user.username, user.full_name)
+    text, kb = await get_subscription_view_data(user.id, db)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data == "open_subscription")
+async def on_open_subscription(callback: CallbackQuery, db: Database):
+    text, kb = await get_subscription_view_data(callback.from_user.id, db)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data == "extend_subscription")
 async def on_extend_subscription(callback: CallbackQuery, db: Database):

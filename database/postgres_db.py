@@ -214,6 +214,22 @@ class PostgresDatabase:
             """, new_until, user_id)
             return new_until
 
+    async def get_active_premium_users(self) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT user_id, username, full_name, premium_until, created_at
+                FROM users
+                WHERE is_premium = 1 AND (premium_until IS NULL OR premium_until > NOW())
+                ORDER BY premium_until ASC;
+            """)
+            return [dict(r) for r in rows]
+
+    async def revoke_user_premium(self, user_id: int):
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = $1;", user_id)
+
     async def get_broadcast_recipients(self, exclude_premium: bool = True) -> List[int]:
         pool = await self.get_pool()
         async with pool.acquire() as conn:

@@ -91,6 +91,93 @@ async def on_start(message: Message, bot: Bot, db: Database):
     )
     await message.answer(greeting, reply_markup=get_main_menu_kb(settings), parse_mode="HTML")
 
+@router.message(Command("search"))
+async def cmd_search(message: Message, bot: Bot, db: Database):
+    user = message.from_user
+    await db.add_or_update_user(user.id, user.username, user.full_name)
+    has_access, missing = await check_user_access(bot, db, user.id)
+    if not has_access:
+        sub_text = "⚠️ <b>Botdan to'liq foydalanish uchun quyidagi kanallarga a'zo bo'ling:</b>"
+        await message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Film qidirish (Inline)", switch_inline_query_current_chat="")],
+        [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")]
+    ])
+    await message.answer(
+        "🔍 <b>Film qidirish:</b>\n\n"
+        "• Film nomini yoki uning kodini chatga yozib yuboring (masalan: <code>Qasoskorlar</code> yoki <code>5555</code>)\n"
+        "• Yoki pastdagi <b>'🔍 Film qidirish'</b> tugmasini bosib to'g'ridan-to'g'ri qidiring!",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+@router.message(Command("top"))
+async def cmd_top(message: Message, bot: Bot, db: Database):
+    user = message.from_user
+    await db.add_or_update_user(user.id, user.username, user.full_name)
+    has_access, missing = await check_user_access(bot, db, user.id)
+    if not has_access:
+        sub_text = "⚠️ <b>Botdan to'liq foydalanish uchun quyidagi kanallarga a'zo bo'ling:</b>"
+        await message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        return
+
+    top_movies = await db.get_top_movies(limit=10)
+    if not top_movies:
+        await message.answer("🎬 Hozircha filmlar mavjud emas.")
+        return
+
+    msg = "🎬 <b>Eng sara va eng ko'p ko'rilgan TOP-10 filmlar:</b>\n\n"
+    buttons = []
+    for idx, m in enumerate(top_movies, 1):
+        msg += f"<b>{idx}. {m['title']}</b>\n— Kod: <code>{m['code']}</code> | 👁 {m.get('views', 0)} ta ko'rish\n\n"
+        buttons.append([InlineKeyboardButton(text=f"🎬 {idx}. {m['title']}", callback_data=f"open_movie_code:{m['code']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="🎬 Inline orqali ko'rish", switch_inline_query_current_chat="top_films"),
+        InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")
+    ])
+    msg += "💡 <i>Filmni ochish uchun quyidagi tugmalardan birini bosing:</i>"
+    await message.answer(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
+@router.message(Command("saved"))
+async def cmd_saved(message: Message, bot: Bot, db: Database):
+    user = message.from_user
+    await db.add_or_update_user(user.id, user.username, user.full_name)
+    has_access, missing = await check_user_access(bot, db, user.id)
+    if not has_access:
+        sub_text = "⚠️ <b>Botdan to'liq foydalanish uchun quyidagi kanallarga a'zo bo'ling:</b>"
+        await message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        return
+
+    saved_movies = await db.get_user_saved_movies(user.id, limit=20)
+    if not saved_movies:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Film qidirish", switch_inline_query_current_chat="")],
+            [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")]
+        ])
+        await message.answer(
+            "⭐ <b>Sizda saqlangan filmlar ro'yxati hozircha bo'sh.</b>\n\n"
+            "Istalgan kinoni ko'rish vaqtida <b>⭐ Saqlash</b> tugmasini bosib shu yerga qo'shishingiz mumkin!",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    msg = f"⭐ <b>Siz saqlagan filmlar (Jami: {len(saved_movies)} ta):</b>\n\n"
+    buttons = []
+    for idx, m in enumerate(saved_movies[:10], 1):
+        msg += f"<b>{idx}. {m['title']}</b> (Kod: <code>{m['code']}</code>)\n"
+        buttons.append([InlineKeyboardButton(text=f"🎬 {idx}. {m['title']}", callback_data=f"open_movie_code:{m['code']}")])
+
+    buttons.append([
+        InlineKeyboardButton(text="⭐ Inline orqali ochish", switch_inline_query_current_chat="saved_films"),
+        InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")
+    ])
+    msg += "\n💡 <i>Filmni ochish uchun tugmani bosing:</i>"
+    await message.answer(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+
 async def send_movie_video_directly(message: Message, bot: Bot, db: Database, code: str):
     user_id = message.from_user.id
     has_access, missing = await check_user_access(bot, db, user_id)

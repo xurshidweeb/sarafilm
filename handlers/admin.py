@@ -1,6 +1,7 @@
 import logging
 import random
 import asyncio
+from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -20,7 +21,9 @@ from keyboards.inline import (
     get_country_selector_kb,
     get_quality_selector_kb,
     get_manage_genres_kb,
-    get_manage_langs_kb
+    get_manage_langs_kb,
+    get_premium_users_kb,
+    get_confirm_revoke_kb
 )
 
 import io
@@ -88,6 +91,9 @@ class AdminSettingState(StatesGroup):
 
 class TransferOwnerState(StatesGroup):
     waiting_for_id = State()
+
+class FindUserPremState(StatesGroup):
+    waiting_for_user_id = State()
 
 class AddGenreState(StatesGroup):
     waiting_for_name = State()
@@ -745,6 +751,230 @@ async def on_del_admin(callback: CallbackQuery, db: Database):
     await db.delete_admin(admin_id)
     await callback.answer("🗑 Admin o'chirildi!", show_alert=True)
     await on_manage_admins(callback, db)
+
+
+# ----------------- PREMIUM FOYDALANUVCHILAR BOSHQARUVI -----------------
+@router.callback_query(F.data == "admin_premium_users")
+async def on_admin_premium_users(callback: CallbackQuery, db: Database, state: FSMContext):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    await state.clear()
+    users = await db.get_active_premium_users()
+    total_count = len(users)
+
+    if not users:
+        text = (
+            "💎 <b>Faol Premium obunachilar:</b>\n\n"
+            "<i>Hozirda hech qanday faol pullik obunachi mavjud emas.</i>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 ID orqali qidirish", callback_data="find_user_prem_prompt")],
+            [InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_menu")]
+        ])
+    else:
+        text = f"💎 <b>Faol Premium obunachilar (Jami: {total_count} ta):</b>\n\n"
+        for idx, u in enumerate(users[:6], 1):
+            name = u.get("full_name") or u.get("username") or str(u["user_id"])
+            p_until = u.get("premium_until")
+            if p_until:
+                if isinstance(p_until, str):
+                    try:
+                        p_dt = datetime.fromisoformat(p_until)
+                        until_str = p_dt.strftime("%d.%m.%Y %H:%M")
+                    except Exception:
+                        until_str = str(p_until)[:16]
+                else:
+                    until_str = p_until.strftime("%d.%m.%Y %H:%M")
+            else:
+                until_str = "Cheksiz"
+            text += f"{idx}. <b>{name}</b> (ID: <code>{u['user_id']}</code>)\n   ⏳ Muddat: <i>{until_str}</i>\n"
+
+        text += "\n💡 <i>Obunani bekor qilish (tortib olish) uchun pastdagi tugmalardan foydalaning:</i>"
+        kb = get_premium_users_kb(users, page=0)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("prem_users_page:"))
+async def on_prem_users_page(callback: CallbackQuery, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    page = int(callback.data.split(":")[1])
+    users = await db.get_active_premium_users()
+    total_count = len(users)
+
+    start = page * 6
+    end = start + 6
+    page_users = users[start:end]
+
+    text = f"💎 <b>Faol Premium obunachilar (Sahifa: {page + 1}, Jami: {total_count} ta):</b>\n\n"
+    for idx, u in enumerate(page_users, start + 1):
+        name = u.get("full_name") or u.get("username") or str(u["user_id"])
+        p_until = u.get("premium_until")
+        if p_until:
+            if isinstance(p_until, str):
+                try:
+                    p_dt = datetime.fromisoformat(p_until)
+                    until_str = p_dt.strftime("%d.%m.%Y %H:%M")
+                except Exception:
+                    until_str = str(p_until)[:16]
+            else:
+                until_str = p_until.strftime("%d.%m.%Y %H:%M")
+        else:
+            until_str = "Cheksiz"
+        text += f"{idx}. <b>{name}</b> (ID: <code>{u['user_id']}</code>)\n   ⏳ Muddat: <i>{until_str}</i>\n"
+
+    text += "\n💡 <i>Obunani bekor qilish (tortib olish) uchun pastdagi tugmalardan foydalaning:</i>"
+    kb = get_premium_users_kb(users, page=page)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("revoke_prem_confirm:"))
+async def on_revoke_prem_confirm(callback: CallbackQuery, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    target_user_id = int(callback.data.split(":")[1])
+    user = await db.get_user(target_user_id)
+    if not user:
+        await callback.answer("Foydalanuvchi topilmadi!", show_alert=True)
+        return
+
+    name = user.get("full_name") or user.get("username") or str(target_user_id)
+    p_until = user.get("premium_until")
+    if p_until:
+        if isinstance(p_until, str):
+            try:
+                p_dt = datetime.fromisoformat(p_until)
+                until_str = p_dt.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                until_str = str(p_until)[:16]
+        else:
+            until_str = p_until.strftime("%d.%m.%Y %H:%M")
+    else:
+        until_str = "Cheksiz / Belgilanmagan"
+
+    text = (
+        "⚠️ <b>Haqiqatan ham Premium obunani bekor qilmoqchimisiz?</b>\n\n"
+        f"👤 <b>Foydalanuvchi:</b> {name}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{target_user_id}</code>\n"
+        f"⏳ <b>Joriy tugash vaqti:</b> {until_str}\n\n"
+        "<i>Eslatma: Obuna bekor qilingach, foydalanuvchiga bu haqda xabar beriladi va Premium imtiyozlari to'xtatiladi.</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=get_confirm_revoke_kb(target_user_id), parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("do_revoke_prem:"))
+async def on_do_revoke_prem(callback: CallbackQuery, bot: Bot, db: Database, state: FSMContext):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    target_user_id = int(callback.data.split(":")[1])
+    await db.revoke_user_premium(target_user_id)
+
+    # Notify target user
+    try:
+        await bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                "⚠️ <b>Eslatma:</b> Sizning 💎 VIP / Premium obunangiz admin tomonidan bekor qilindi.\n\n"
+                "Qayta faollashtirish uchun asosiy menyudagi '💎 Obuna' bo'limiga kiring."
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Could not notify user {target_user_id} about revoked premium: {e}")
+
+    await callback.answer("❌ Premium obuna muvaffaqiyatli tortib olindi!", show_alert=True)
+    await on_admin_premium_users(callback, db, state)
+
+
+@router.callback_query(F.data == "find_user_prem_prompt")
+async def on_find_user_prem_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    await state.set_state(FindUserPremState.waiting_for_user_id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_premium_users")
+    ]])
+    await callback.message.edit_text(
+        "🔍 <b>Foydalanuvchining Telegram ID sini kiriting:</b>\n\n"
+        "<i>(Faqat raqamlardan iborat Telegram ID yuboring)</i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+
+@router.message(FindUserPremState.waiting_for_user_id, F.text)
+async def on_find_user_prem_id_received(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        return
+
+    text_val = message.text.strip()
+    if not text_val.isdigit():
+        await message.reply("⚠️ Iltimos, faqat raqamlardan iborat Telegram ID yuboring!")
+        return
+
+    target_id = int(text_val)
+    user = await db.get_user(target_id)
+    if not user:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ Premium a'zolar ro'yxati", callback_data="admin_premium_users")
+        ]])
+        await message.reply(f"❌ <code>{target_id}</code> ID ga ega foydalanuvchi bot bazasida topilmadi.", reply_markup=kb, parse_mode="HTML")
+        await state.clear()
+        return
+
+    is_prem = await db.is_user_premium(target_id)
+    name = user.get("full_name") or user.get("username") or str(target_id)
+    p_until = user.get("premium_until")
+    if p_until:
+        if isinstance(p_until, str):
+            try:
+                p_dt = datetime.fromisoformat(p_until)
+                until_str = p_dt.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                until_str = str(p_until)[:16]
+        else:
+            until_str = p_until.strftime("%d.%m.%Y %H:%M")
+    else:
+        until_str = "Cheksiz / Belgilanmagan"
+
+    await state.clear()
+    if is_prem:
+        text = (
+            f"👤 <b>Foydalanuvchi topildi:</b>\n\n"
+            f"• Nomi: <b>{name}</b>\n"
+            f"• ID: <code>{target_id}</code>\n"
+            f"• Obuna holati: 💎 Faol\n"
+            f"• Tugash vaqti: <i>{until_str}</i>\n\n"
+            "Ushbu foydalanuvchining obunasini tortib olmoqchimisiz?"
+        )
+        await message.reply(text, reply_markup=get_confirm_revoke_kb(target_id), parse_mode="HTML")
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ Premium a'zolar", callback_data="admin_premium_users")
+        ]])
+        text = (
+            f"👤 <b>Foydalanuvchi topildi:</b>\n\n"
+            f"• Nomi: <b>{name}</b>\n"
+            f"• ID: <code>{target_id}</code>\n"
+            f"• Obuna holati: ❌ Faol emas (Oddiy foydalanuvchi)\n"
+        )
+        await message.reply(text, reply_markup=kb, parse_mode="HTML")
+
 
 # ----------------- REKLAMA TARQATISH (BROADCAST) -----------------
 @router.callback_query(F.data == "admin_broadcast")

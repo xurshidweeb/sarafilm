@@ -222,6 +222,35 @@ class Database:
             await db.commit()
             return new_until
 
+    async def get_active_premium_users(self) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT user_id, username, full_name, premium_until, created_at
+                FROM users
+                WHERE is_premium = 1
+                ORDER BY premium_until ASC
+            """)
+            rows = await cursor.fetchall()
+            now = datetime.now()
+            res = []
+            for r in rows:
+                p_until = r["premium_until"]
+                if p_until:
+                    try:
+                        until = datetime.fromisoformat(p_until) if isinstance(p_until, str) else p_until
+                        if now > until:
+                            continue
+                    except Exception:
+                        pass
+                res.append(dict(r))
+            return res
+
+    async def revoke_user_premium(self, user_id: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?", (user_id,))
+            await db.commit()
+
     async def get_broadcast_recipients(self, exclude_premium: bool = True) -> List[int]:
         """
         Returns a list of user IDs to send broadcasts to.
