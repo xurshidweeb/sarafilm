@@ -201,7 +201,7 @@ def get_confirm_movie_kb() -> InlineKeyboardMarkup:
     ])
 
 def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
-    """Admin panel main keyboard"""
+    """Admin panel main keyboard with strict role separation"""
     buttons = [
         [
             InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stats"),
@@ -213,19 +213,21 @@ def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📢 Majburiy kanallar", callback_data="admin_channels"),
-            InlineKeyboardButton(text="👥 Adminlar boshqaruvi", callback_data="admin_manage_admins")
-        ],
-        [
-            InlineKeyboardButton(text="📢 Reklama tarqatish", callback_data="admin_broadcast"),
-            InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings")
-        ],
-        [
-            InlineKeyboardButton(text="⚙️ Matn & Tugmalar sozlamalari", callback_data="admin_settings_menu")
+            InlineKeyboardButton(text="📢 Reklama tarqatish", callback_data="admin_broadcast")
         ]
     ]
     if is_owner:
-        buttons.append([
-            InlineKeyboardButton(text="👑 Egalikni o'tkazish (Transfer Owner)", callback_data="admin_transfer_owner")
+        buttons.extend([
+            [
+                InlineKeyboardButton(text="👥 Adminlar boshqaruvi", callback_data="admin_manage_admins"),
+                InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings")
+            ],
+            [
+                InlineKeyboardButton(text="⚙️ Matn & Tugmalar sozlamalari", callback_data="admin_settings_menu")
+            ],
+            [
+                InlineKeyboardButton(text="👑 Egalikni o'tkazish (Transfer Owner)", callback_data="admin_transfer_owner")
+            ]
         ])
     buttons.append([
         InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="back_to_main")

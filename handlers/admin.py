@@ -100,13 +100,19 @@ async def is_authorized_admin(user_id: int, db: Database) -> bool:
         return True
     return await db.is_admin(user_id, extra_admins=config.ADMIN_IDS)
 
+async def is_owner_user(user_id: int, db: Database) -> bool:
+    if user_id in config.ADMIN_IDS:
+        return True
+    owner_id = await db.get_owner_id()
+    return user_id == owner_id
+
 @router.message(Command("admin"))
 async def on_admin_cmd(message: Message, db: Database):
     if not await is_authorized_admin(message.from_user.id, db):
         await message.reply("⛔️ Siz admin emassiz!")
         return
 
-    is_owner = (message.from_user.id == await db.get_owner_id())
+    is_owner = await is_owner_user(message.from_user.id, db)
     text = (
         "👑 <b>Admin Boshqaruv Paneliga xush kelibsiz!</b>\n\n"
         "Kerakli bo'limni tanlang:"
@@ -141,7 +147,7 @@ async def on_back_admin_menu(callback: CallbackQuery, state: FSMContext, db: Dat
     if not await is_authorized_admin(callback.from_user.id, db):
         return
     await state.clear()
-    is_owner = (callback.from_user.id == await db.get_owner_id())
+    is_owner = await is_owner_user(callback.from_user.id, db)
     text = "👑 <b>Admin Boshqaruv Paneli:</b>"
     await callback.message.edit_text(text, reply_markup=get_admin_main_kb(is_owner=is_owner), parse_mode="HTML")
 
@@ -454,7 +460,7 @@ async def on_confirm_movie_save(callback: CallbackQuery, state: FSMContext, bot:
         poster_url=poster_url
     )
     await state.clear()
-    is_owner = (callback.from_user.id == await db.get_owner_id())
+    is_owner = await is_owner_user(callback.from_user.id, db)
     await callback.message.edit_text(
         f"🎉 <b>Kino muvaffaqiyatli saqlandi va nashr qilindi!</b>\n\n"
         f"📌 <b>Nomi:</b> {data['title']}\n"
@@ -467,9 +473,10 @@ async def on_confirm_movie_save(callback: CallbackQuery, state: FSMContext, bot:
     )
 
 @router.callback_query(MovieWizard.confirm_movie, F.data == "movie_cancel")
-async def on_cancel_movie(callback: CallbackQuery, state: FSMContext):
+async def on_cancel_movie(callback: CallbackQuery, state: FSMContext, db: Database):
     await state.clear()
-    await callback.message.edit_text("❌ Kino yuklash bekor qilindi.", reply_markup=get_admin_main_kb())
+    is_owner = await is_owner_user(callback.from_user.id, db)
+    await callback.message.edit_text("❌ Kino yuklash bekor qilindi.", reply_markup=get_admin_main_kb(is_owner=is_owner))
 
 # ----------------- KINOLAR RO'YXATI -----------------
 @router.callback_query(F.data == "admin_list_movies")
@@ -665,7 +672,8 @@ async def on_del_channel(callback: CallbackQuery, db: Database):
 # ----------------- ADMINLAR BOSHQARUVI -----------------
 @router.callback_query(F.data == "admin_manage_admins")
 async def on_manage_admins(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
     admins = await db.get_all_admins()
@@ -689,7 +697,10 @@ async def on_manage_admins(callback: CallbackQuery, db: Database):
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), parse_mode="HTML")
 
 @router.callback_query(F.data == "admin_add_admin_prompt")
-async def on_add_admin_prompt(callback: CallbackQuery, state: FSMContext):
+async def on_add_admin_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     await state.set_state(AddAdminState.waiting_for_id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_manage_admins")]])
     await callback.message.edit_text(
@@ -701,6 +712,10 @@ async def on_add_admin_prompt(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AddAdminState.waiting_for_id, F.text)
 async def on_admin_id_received(message: Message, state: FSMContext, bot: Bot, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!")
+        return
     text_val = message.text.strip()
     if not text_val.isdigit():
         await message.reply("⚠️ Iltimos, faqat raqamlardan iborat Telegram ID yuboring!")
@@ -723,6 +738,9 @@ async def on_admin_id_received(message: Message, state: FSMContext, bot: Bot, db
 
 @router.callback_query(F.data.startswith("del_admin:"))
 async def on_del_admin(callback: CallbackQuery, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     admin_id = int(callback.data.split(":")[1])
     await db.delete_admin(admin_id)
     await callback.answer("🗑 Admin o'chirildi!", show_alert=True)
@@ -782,7 +800,7 @@ async def on_broadcast_message_received(message: Message, state: FSMContext, db:
 @router.callback_query(BroadcastState.confirm_broadcast, F.data == "cancel_broadcast")
 async def on_cancel_broadcast(callback: CallbackQuery, state: FSMContext, db: Database):
     await state.clear()
-    is_owner = (callback.from_user.id == await db.get_owner_id())
+    is_owner = await is_owner_user(callback.from_user.id, db)
     await callback.message.edit_text("❌ Reklama tarqatish bekor qilindi.", reply_markup=get_admin_main_kb(is_owner=is_owner))
 
 @router.callback_query(BroadcastState.confirm_broadcast, F.data == "confirm_broadcast")
@@ -849,7 +867,7 @@ async def on_confirm_broadcast(callback: CallbackQuery, state: FSMContext, bot: 
         except Exception:
             blocked += 1
 
-    is_owner = (callback.from_user.id == await db.get_owner_id())
+    is_owner = await is_owner_user(callback.from_user.id, db)
     await status_msg.edit_text(
         f"📊 <b>Reklama tarqatish yakunlandi:</b>\n\n"
         f"✅ <b>Yetkazildi:</b> {sent} ta\n"
@@ -862,7 +880,10 @@ async def on_confirm_broadcast(callback: CallbackQuery, state: FSMContext, bot: 
 
 # ----------------- KARTA SOZLAMALARI -----------------
 @router.callback_query(F.data == "admin_card_settings")
-async def on_card_settings(callback: CallbackQuery, state: FSMContext):
+async def on_card_settings(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Karta sozlash faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     await state.set_state(CardSettingState.waiting_for_number)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_menu")]])
     await callback.message.edit_text(
@@ -873,13 +894,21 @@ async def on_card_settings(callback: CallbackQuery, state: FSMContext):
     )
 
 @router.message(CardSettingState.waiting_for_number, F.text)
-async def on_card_number_set(message: Message, state: FSMContext):
+async def on_card_number_set(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Karta sozlash faqat Asosiy Admin (Owner) uchun!")
+        return
     await state.update_data(card_number=message.text.strip())
     await state.set_state(CardSettingState.waiting_for_holder)
     await message.reply("👤 <b>Karta egasining ism va familiyasini kiriting:</b>\n<i>(Masalan: Palonchiyev Pistonchi)</i>", parse_mode="HTML")
 
 @router.message(CardSettingState.waiting_for_holder, F.text)
-async def on_card_holder_set(message: Message, state: FSMContext):
+async def on_card_holder_set(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Karta sozlash faqat Asosiy Admin (Owner) uchun!")
+        return
     data = await state.get_data()
     config.CARD_NUMBER = data["card_number"]
     config.CARD_HOLDER = message.text.strip()
@@ -898,7 +927,8 @@ async def on_card_holder_set(message: Message, state: FSMContext):
 # ----------------- SOZLAMALAR (MATN VA TUGMALAR) -----------------
 @router.callback_query(F.data == "admin_settings_menu")
 async def on_admin_settings_menu(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
     settings = await db.get_all_settings()
@@ -917,7 +947,8 @@ async def on_admin_settings_menu(callback: CallbackQuery, db: Database):
 
 @router.callback_query(F.data == "admin_edit_buttons_menu")
 async def on_admin_edit_buttons_menu(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
     settings = await db.get_all_settings()
@@ -940,7 +971,8 @@ async def on_admin_edit_buttons_menu(callback: CallbackQuery, db: Database):
 
 @router.callback_query(F.data.startswith("edit_setting:"))
 async def on_start_edit_setting(callback: CallbackQuery, state: FSMContext, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
     key = callback.data.split(":")[1]
@@ -971,6 +1003,10 @@ async def on_start_edit_setting(callback: CallbackQuery, state: FSMContext, db: 
 
 @router.message(AdminSettingState.waiting_for_value, F.text)
 async def on_save_setting_value(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!")
+        return
     data = await state.get_data()
     key = data.get("setting_key")
     if not key:
@@ -989,7 +1025,8 @@ async def on_save_setting_value(message: Message, state: FSMContext, db: Databas
 
 @router.callback_query(F.data == "reset_all_settings")
 async def on_reset_settings(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
     await db.reset_custom_settings()
@@ -999,8 +1036,7 @@ async def on_reset_settings(callback: CallbackQuery, db: Database):
 # ----------------- EGALIKNI TOPSHIRISH (TRANSFER OWNER) -----------------
 @router.callback_query(F.data == "admin_transfer_owner")
 async def on_transfer_owner_start(callback: CallbackQuery, state: FSMContext, db: Database):
-    owner_id = await db.get_owner_id()
-    if callback.from_user.id != owner_id:
+    if not await is_owner_user(callback.from_user.id, db):
         await callback.answer("⛔️ Faqat botning Asosiy Egasi (Owner) egalikni o'tkaza oladi!", show_alert=True)
         return
 
@@ -1016,12 +1052,12 @@ async def on_transfer_owner_start(callback: CallbackQuery, state: FSMContext, db
 
 @router.message(TransferOwnerState.waiting_for_id, F.text)
 async def on_transfer_owner_confirm(message: Message, state: FSMContext, bot: Bot, db: Database):
-    owner_id = await db.get_owner_id()
-    if message.from_user.id != owner_id:
+    if not await is_owner_user(message.from_user.id, db):
         await state.clear()
         await message.reply("⛔️ Ruxsat berilmadi.")
         return
 
+    owner_id = await db.get_owner_id()
     text_val = message.text.strip()
     if not text_val.isdigit():
         await message.reply("⚠️ Iltimos, faqat raqamlardan iborat Telegram ID yuboring!")
@@ -1067,7 +1103,8 @@ async def on_transfer_owner_confirm(message: Message, state: FSMContext, bot: Bo
 # ----------------- JANRLAR BOSHQARUVI -----------------
 @router.callback_query(F.data == "admin_manage_genres")
 async def on_manage_genres(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
     genres = await db.get_all_genres()
     text = (
@@ -1077,13 +1114,20 @@ async def on_manage_genres(callback: CallbackQuery, db: Database):
     await callback.message.edit_text(text, reply_markup=get_manage_genres_kb(genres), parse_mode="HTML")
 
 @router.callback_query(F.data == "admin_add_genre_prompt")
-async def on_add_genre_prompt(callback: CallbackQuery, state: FSMContext):
+async def on_add_genre_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     await state.set_state(AddGenreState.waiting_for_name)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_manage_genres")]])
     await callback.message.edit_text("🎭 <b>Yangi janr nomini yozing:</b>\n<i>(Masalan: Anime, Psixologik, Fantastika)</i>", reply_markup=kb, parse_mode="HTML")
 
 @router.message(AddGenreState.waiting_for_name, F.text)
 async def on_genre_name_entered(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!")
+        return
     name = message.text.strip()
     success = await db.add_genre(name)
     await state.clear()
@@ -1095,6 +1139,9 @@ async def on_genre_name_entered(message: Message, state: FSMContext, db: Databas
 
 @router.callback_query(F.data.startswith("del_genre:"))
 async def on_del_genre(callback: CallbackQuery, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     genre_name = callback.data.split(":")[1]
     await db.delete_genre(genre_name)
     await callback.answer(f"🗑 '{genre_name}' o'chirildi!", show_alert=False)
@@ -1103,7 +1150,8 @@ async def on_del_genre(callback: CallbackQuery, db: Database):
 # ----------------- TILLAR BOSHQARUVI -----------------
 @router.callback_query(F.data == "admin_manage_langs")
 async def on_manage_langs(callback: CallbackQuery, db: Database):
-    if not await is_authorized_admin(callback.from_user.id, db):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
     langs = await db.get_all_languages()
     text = (
@@ -1113,13 +1161,20 @@ async def on_manage_langs(callback: CallbackQuery, db: Database):
     await callback.message.edit_text(text, reply_markup=get_manage_langs_kb(langs), parse_mode="HTML")
 
 @router.callback_query(F.data == "admin_add_lang_prompt")
-async def on_add_lang_prompt(callback: CallbackQuery, state: FSMContext):
+async def on_add_lang_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     await state.set_state(AddLangState.waiting_for_name)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_manage_langs")]])
     await callback.message.edit_text("🚩 <b>Yangi til nomini yozing:</b>\n<i>(Masalan: Fransuz, Nemis, Yapon)</i>", reply_markup=kb, parse_mode="HTML")
 
 @router.message(AddLangState.waiting_for_name, F.text)
 async def on_lang_name_entered(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        await message.reply("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!")
+        return
     name = message.text.strip()
     success = await db.add_language(name)
     await state.clear()
@@ -1131,6 +1186,9 @@ async def on_lang_name_entered(message: Message, state: FSMContext, db: Database
 
 @router.callback_query(F.data.startswith("del_lang:"))
 async def on_del_lang(callback: CallbackQuery, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu amal faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
     lang_name = callback.data.split(":")[1]
     await db.delete_language(lang_name)
     await callback.answer(f"🗑 '{lang_name}' o'chirildi!", show_alert=False)
