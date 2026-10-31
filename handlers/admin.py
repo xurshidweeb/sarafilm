@@ -23,7 +23,9 @@ from keyboards.inline import (
     get_manage_genres_kb,
     get_manage_langs_kb,
     get_premium_users_kb,
-    get_confirm_revoke_kb
+    get_confirm_revoke_kb,
+    get_kino_management_kb,
+    get_serial_wizard_season_kb
 )
 
 import io
@@ -101,6 +103,32 @@ class AddGenreState(StatesGroup):
 class AddLangState(StatesGroup):
     waiting_for_name = State()
 
+class SerialWizard(StatesGroup):
+    waiting_for_poster = State()
+    waiting_for_title = State()
+    waiting_for_year = State()
+    waiting_for_genre = State()
+    waiting_for_lang = State()
+    waiting_for_country = State()
+    waiting_for_quality = State()
+    waiting_for_code = State()
+    waiting_for_season_name = State()
+    waiting_for_episode = State()
+    confirm_serial = State()
+
+class AddEpisodeState(StatesGroup):
+    waiting_for_serial_code = State()
+    waiting_for_season_choice = State()
+    waiting_for_new_season_name = State()
+    waiting_for_episode_video = State()
+
+class TransferPasswordState(StatesGroup):
+    waiting_for_old_password = State()
+
+class ChangeTransferPasswordState(StatesGroup):
+    waiting_for_current_password = State()
+    waiting_for_new_password = State()
+
 async def is_authorized_admin(user_id: int, db: Database) -> bool:
     if user_id in config.ADMIN_IDS:
         return True
@@ -156,6 +184,19 @@ async def on_back_admin_menu(callback: CallbackQuery, state: FSMContext, db: Dat
     is_owner = await is_owner_user(callback.from_user.id, db)
     text = "👑 <b>Admin Boshqaruv Paneli:</b>"
     await callback.message.edit_text(text, reply_markup=get_admin_main_kb(is_owner=is_owner), parse_mode="HTML")
+
+
+# ----------------- KINO & SERIAL BOSHQARUVI SUBMENU -----------------
+@router.callback_query(F.data == "admin_kino_management")
+async def on_kino_management(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_authorized_admin(callback.from_user.id, db):
+        return
+    await state.clear()
+    text = (
+        "🎬 <b>Kino & Serial Boshqaruvi</b>\n\n"
+        "Quyidagi amallardan birini tanlang:"
+    )
+    await callback.message.edit_text(text, reply_markup=get_kino_management_kb(), parse_mode="HTML")
 
 
 # ----------------- KINO QO'SHISH (FSM WIZARD) -----------------
@@ -503,14 +544,40 @@ async def on_admin_list_movies(callback: CallbackQuery, db: Database):
             InlineKeyboardButton(text="🎬 Kino qo'shish", callback_data="admin_add_movie"),
             InlineKeyboardButton(text="🗑 Kino o'chirish", callback_data="admin_delete_movie")
         ],
-        [InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")]
+        [InlineKeyboardButton(text="⬅️ Kino & Serial boshqaruvi", callback_data="admin_kino_management")]
     ])
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception:
         await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# ----------------- KINO O'CHIRISH -----------------
+# ----------------- SERIALLAR RO'YXATI -----------------
+@router.callback_query(F.data == "admin_list_serials")
+async def on_admin_list_serials(callback: CallbackQuery, db: Database):
+    if not await is_authorized_admin(callback.from_user.id, db):
+        return
+
+    serials = await db.get_all_serials(limit=50)
+    if not serials:
+        text = "📺 <b>Bazadagi seriallar ro'yxati:</b>\n\n<i>Hozircha hech qanday serial qo'shilmagan.</i>"
+    else:
+        text = f"📺 <b>Bazadagi seriallar ro'yxati ({len(serials)} ta):</b>\n\n"
+        for idx, s in enumerate(serials, 1):
+            text += f"{idx}. <b>{s['title']}</b>\n   🔒 Kod: <code>{s['code']}</code> | 👁 Ko'rishlar: {s.get('views', 0)}\n   🎭 {s.get('genre')} | 📅 {s.get('year')}\n\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📺 Yangi serial qo'shish", callback_data="admin_add_serial"),
+            InlineKeyboardButton(text="➕ Qism qo'shish", callback_data="admin_add_episode")
+        ],
+        [InlineKeyboardButton(text="⬅️ Kino & Serial boshqaruvi", callback_data="admin_kino_management")]
+    ])
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# ----------------- KINO / SERIAL O'CHIRISH -----------------
 @router.callback_query(F.data == "admin_delete_movie")
 async def on_delete_movie_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
     if not await is_authorized_admin(callback.from_user.id, db):
@@ -518,10 +585,10 @@ async def on_delete_movie_prompt(callback: CallbackQuery, state: FSMContext, db:
 
     await state.set_state(DeleteMovieState.waiting_for_code)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_menu")
+        InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")
     ]])
     await callback.message.edit_text(
-        "🗑 <b>O'chirmoqchi bo'lgan kinongizning kodini yuboring:</b>",
+        "🗑 <b>O'chirmoqchi bo'lgan kino yoki serial kodini yuboring:</b>",
         reply_markup=kb,
         parse_mode="HTML"
     )
@@ -530,15 +597,476 @@ async def on_delete_movie_prompt(callback: CallbackQuery, state: FSMContext, db:
 async def on_delete_movie_code(message: Message, state: FSMContext, db: Database):
     code = message.text.strip()
     deleted = await db.delete_movie_by_code(code)
+    if not deleted:
+        deleted = await db.delete_serial_by_code(code)
+
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📋 Kinolar ro'yxati", callback_data="admin_list_movies"),
-        InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")
+        InlineKeyboardButton(text="📋 Kinolar", callback_data="admin_list_movies"),
+        InlineKeyboardButton(text="📺 Seriallar", callback_data="admin_list_serials"),
+        InlineKeyboardButton(text="⬅️ Boshqaruv", callback_data="admin_kino_management")
     ]])
     if deleted:
-        await message.reply(f"✅ <b>#{code}</b> kodli kino bazadan muvaffaqiyatli o'chirildi!", reply_markup=kb, parse_mode="HTML")
+        await message.reply(f"✅ <b>#{code}</b> kodli kino/serial bazadan muvaffaqiyatli o'chirildi!", reply_markup=kb, parse_mode="HTML")
     else:
-        await message.reply(f"❌ <b>#{code}</b> kodli kino topilmadi!", reply_markup=kb, parse_mode="HTML")
+        await message.reply(f"❌ <b>#{code}</b> kodli kino yoki serial topilmadi!", reply_markup=kb, parse_mode="HTML")
+
+# ================== SERIAL QO'SHISH (FSM WIZARD) ==================
+@router.callback_query(F.data == "admin_add_serial")
+async def on_start_add_serial(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_authorized_admin(callback.from_user.id, db):
+        return
+    await state.set_state(SerialWizard.waiting_for_poster)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        "📺 <b>Yangi serial qo'shish (1/8)</b>\n\n"
+        "🖼 <b>Serial uchun poster (muqova) rasmini yuboring:</b>\n\n"
+        "<i>Bu rasm foydalanuvchilarga serialni tanlashda ko'rsatiladi.</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(SerialWizard.waiting_for_poster, F.photo)
+async def on_serial_poster(message: Message, state: FSMContext, bot: Bot):
+    poster_file_id = message.photo[-1].file_id
+    poster_url = await upload_poster_to_catbox(bot, poster_file_id)
+    await state.update_data(poster_file_id=poster_file_id, poster_url=poster_url or "")
+    await state.set_state(SerialWizard.waiting_for_title)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await message.answer("📺 <b>Serial qo'shish (2/8)</b>\n\n📝 <b>Serial nomini yozing:</b>\n\n<i>Masalan: Taxtlar O'yini, Squid Game, Ertugrul</i>", reply_markup=kb, parse_mode="HTML")
+
+@router.message(SerialWizard.waiting_for_title, F.text)
+async def on_serial_title(message: Message, state: FSMContext):
+    await state.update_data(title=message.text.strip())
+    await state.set_state(SerialWizard.waiting_for_year)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await message.answer("📺 <b>Serial qo'shish (3/8)</b>\n\n📅 <b>Yilni kiriting:</b>\n\n<i>Masalan: 2011-2019 yoki 2024</i>", reply_markup=kb, parse_mode="HTML")
+
+@router.message(SerialWizard.waiting_for_year, F.text)
+async def on_serial_year(message: Message, state: FSMContext, db: Database):
+    await state.update_data(year=message.text.strip())
+    await state.set_state(SerialWizard.waiting_for_genre)
+    genres = await db.get_all_genres()
+    kb = get_genre_selector_kb(genres, [])
+    await message.answer("📺 <b>Serial qo'shish (4/8)</b>\n\n🎭 <b>Janrni tanlang:</b>", reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(SerialWizard.waiting_for_genre, F.data.startswith("toggle_wz_genre:"))
+async def on_serial_genre_toggle(callback: CallbackQuery, state: FSMContext, db: Database):
+    genre = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("genres", [])
+    if genre in selected:
+        selected.remove(genre)
+    else:
+        selected.append(genre)
+    await state.update_data(genres=selected)
+    genres = await db.get_all_genres()
+    await callback.message.edit_reply_markup(reply_markup=get_genre_selector_kb(genres, selected))
+    await callback.answer()
+
+@router.callback_query(SerialWizard.waiting_for_genre, F.data == "done_wz_genre")
+async def on_serial_genre_done(callback: CallbackQuery, state: FSMContext, db: Database):
+    data = await state.get_data()
+    selected = data.get("genres", [])
+    genre_str = ", ".join(selected) if selected else "Boshqa"
+    await state.update_data(genre=genre_str)
+    await state.set_state(SerialWizard.waiting_for_lang)
+    langs = await db.get_all_languages()
+    kb = get_lang_selector_kb(langs, [])
+    await callback.message.edit_text("📺 <b>Serial qo'shish (5/8)</b>\n\n🚩 <b>Tilni tanlang:</b>", reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(SerialWizard.waiting_for_lang, F.data.startswith("toggle_wz_lang:"))
+async def on_serial_lang_toggle(callback: CallbackQuery, state: FSMContext, db: Database):
+    lang = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected = data.get("langs", [])
+    if lang in selected:
+        selected.remove(lang)
+    else:
+        selected.append(lang)
+    await state.update_data(langs=selected)
+    langs = await db.get_all_languages()
+    await callback.message.edit_reply_markup(reply_markup=get_lang_selector_kb(langs, selected))
+    await callback.answer()
+
+@router.callback_query(SerialWizard.waiting_for_lang, F.data == "done_wz_lang")
+async def on_serial_lang_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("langs", [])
+    lang_str = ", ".join(selected) if selected else "O'zbek"
+    await state.update_data(language=lang_str)
+    await state.set_state(SerialWizard.waiting_for_country)
+    await callback.message.edit_text("📺 <b>Serial qo'shish (6/8)</b>\n\n🌍 <b>Davlatni tanlang:</b>", reply_markup=get_country_selector_kb(), parse_mode="HTML")
+
+@router.callback_query(SerialWizard.waiting_for_country, F.data.startswith("set_wz_country:"))
+async def on_serial_country(callback: CallbackQuery, state: FSMContext):
+    country = callback.data.split(":")[1]
+    await state.update_data(country=country)
+    await state.set_state(SerialWizard.waiting_for_quality)
+    await callback.message.edit_text("📺 <b>Serial qo'shish (7/8)</b>\n\n⚡️ <b>Sifatni tanlang:</b>", reply_markup=get_quality_selector_kb(), parse_mode="HTML")
+
+@router.callback_query(SerialWizard.waiting_for_quality, F.data.startswith("set_wz_quality:"))
+async def on_serial_quality(callback: CallbackQuery, state: FSMContext):
+    quality = callback.data.split(":")[1]
+    await state.update_data(quality=quality)
+    await state.set_state(SerialWizard.waiting_for_code)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        "📺 <b>Serial qo'shish (8/8)</b>\n\n🔢 <b>Serial kodini kiriting:</b>\n\n"
+        "<i>Bu kod foydalanuvchi serialni topish uchun yozadigan unikal raqam.\n"
+        "Masalan: 250, 1001, 500\n"
+        "Diqqat: Har bir serial va kinoning kodi unikal bo'lishi shart!</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(SerialWizard.waiting_for_code, F.text)
+async def on_serial_code(message: Message, state: FSMContext, db: Database):
+    code = message.text.strip()
+    existing_movie = await db.get_movie_by_code(code)
+    existing_serial = await db.get_serial_by_code(code)
+    if existing_movie or existing_serial:
+        await message.reply(f"⚠️ <b>{code}</b> kodi allaqachon ishlatilgan! Boshqa kod kiriting.", parse_mode="HTML")
+        return
+
+    await state.update_data(code=code)
+    data = await state.get_data()
+
+    await state.set_state(SerialWizard.waiting_for_season_name)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await message.answer(
+        f"✅ <b>Serial ma'lumotlari tayyor!</b>\n\n"
+        f"📺 <b>{data.get('title')}</b> | Kod: <code>{code}</code>\n\n"
+        f"Endi <b>1-fasl nomini</b> kiriting:\n"
+        f"<i>(Masalan: 1-fasl, Season 1)</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(SerialWizard.waiting_for_season_name, F.text)
+async def on_serial_season_name(message: Message, state: FSMContext):
+    season_name = message.text.strip()
+    data = await state.get_data()
+    current_season_number = data.get("current_season_number", 1)
+    await state.update_data(
+        current_season_name=season_name,
+        current_season_number=current_season_number,
+        current_episode_number=1,
+        episodes_list=[]
+    )
+    await state.set_state(SerialWizard.waiting_for_episode)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await message.answer(
+        f"📺 <b>{data.get('title')}</b> → <b>{season_name}</b>\n\n"
+        f"🎬 <b>1-qism videosini yuboring:</b>\n\n"
+        f"<i>Bot ushbu qismni {season_name}ga biriktiradi.</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(SerialWizard.waiting_for_episode, F.video | F.document)
+async def on_serial_episode_video(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if message.video:
+        file_id = message.video.file_id
+        file_type = "video"
+    else:
+        file_id = message.document.file_id
+        file_type = "document"
+
+    episodes_list = data.get("episodes_list", [])
+    current_ep = data.get("current_episode_number", 1)
+    season_name = data.get("current_season_name", "1-fasl")
+    episodes_list.append({"episode_number": current_ep, "file_id": file_id, "file_type": file_type})
+    await state.update_data(episodes_list=episodes_list, current_episode_number=current_ep + 1)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"➕ Yana {current_ep + 1}-qism qo'shish", callback_data="serial_wz_add_more"),
+            InlineKeyboardButton(text="✅ Saqlash va tugatish", callback_data="serial_wz_finish")
+        ],
+        [
+            InlineKeyboardButton(text="📁 Yangi fasl ochish", callback_data="serial_wz_new_season")
+        ]
+    ])
+    await message.answer(
+        f"✅ <b>{season_name} → {current_ep}-qism</b> qabul qilindi!\n\n"
+        f"Bu faslda hozir: <b>{len(episodes_list)} ta qism</b> mavjud.\n\n"
+        f"Keyingi qadam:",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(SerialWizard.waiting_for_episode, F.data == "serial_wz_add_more")
+async def on_serial_wz_add_more(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current_ep = data.get("current_episode_number", 2)
+    season_name = data.get("current_season_name", "1-fasl")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        f"📺 <b>{data.get('title')}</b> → <b>{season_name}</b>\n\n"
+        f"🎬 <b>{current_ep}-qism videosini yuboring:</b>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(SerialWizard.waiting_for_episode, F.data == "serial_wz_new_season")
+async def on_serial_wz_new_season(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current_season = data.get("current_season_number", 1)
+
+    seasons_data = data.get("seasons_data", [])
+    seasons_data.append({
+        "season_number": current_season,
+        "season_name": data.get("current_season_name", f"{current_season}-fasl"),
+        "episodes": data.get("episodes_list", [])
+    })
+
+    await state.update_data(
+        seasons_data=seasons_data,
+        current_season_number=current_season + 1,
+        episodes_list=[]
+    )
+
+    await state.set_state(SerialWizard.waiting_for_season_name)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        f"📺 <b>Yangi fasl nomini kiriting:</b>\n\n"
+        f"<i>Masalan: {current_season + 1}-fasl, Season {current_season + 1}</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(SerialWizard.waiting_for_episode, F.data == "serial_wz_finish")
+async def on_serial_wz_finish(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    seasons_data = list(data.get("seasons_data", []))
+    current_eps = data.get("episodes_list", [])
+    if current_eps:
+        seasons_data.append({
+            "season_number": data.get("current_season_number", 1),
+            "season_name": data.get("current_season_name", "1-fasl"),
+            "episodes": current_eps
+        })
+
+    total_seasons = len(seasons_data)
+    total_episodes = sum(len(s["episodes"]) for s in seasons_data)
+
+    await state.update_data(seasons_data=seasons_data)
+    await state.set_state(SerialWizard.confirm_serial)
+
+    text = (
+        f"✅ <b>Tasdiqlash:</b>\n\n"
+        f"📺 <b>Serial:</b> {data.get('title')}\n"
+        f"🔢 <b>Kod:</b> <code>{data.get('code')}</code>\n"
+        f"📅 <b>Yil:</b> {data.get('year')}\n"
+        f"🎭 <b>Janr:</b> {data.get('genre')}\n"
+        f"🚩 <b>Til:</b> {data.get('language')}\n"
+        f"🌍 <b>Davlat:</b> {data.get('country')}\n"
+        f"⚡️ <b>Sifat:</b> {data.get('quality')}\n\n"
+        f"📊 <b>Hajmi:</b> {total_seasons} fasl · {total_episodes} qism\n\n"
+        f"Bazaga saqlansinmi?"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, saqlash!", callback_data="serial_wz_confirm_save"),
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_kino_management")
+        ]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(SerialWizard.confirm_serial, F.data == "serial_wz_confirm_save")
+async def on_serial_wz_confirm_save(callback: CallbackQuery, state: FSMContext, db: Database):
+    data = await state.get_data()
+    seasons_data = data.get("seasons_data", [])
+
+    await callback.message.edit_text("⏳ <b>Serial bazaga saqlanmoqda...</b>", parse_mode="HTML")
+
+    try:
+        raw_year = str(data.get("year", "2024")).split("-")[0].strip()
+        year_int = int(raw_year) if raw_year.isdigit() else 2024
+
+        serial_id = await db.add_serial(
+            code=data["code"],
+            title=data["title"],
+            poster_file_id=data.get("poster_file_id", ""),
+            poster_url=data.get("poster_url", ""),
+            language=data.get("language", "O'zbek"),
+            genre=data.get("genre", "Boshqa"),
+            country=data.get("country", "AQSH"),
+            year=year_int,
+            quality=data.get("quality", "1080p")
+        )
+
+        total_ep_saved = 0
+        for season in seasons_data:
+            season_id = await db.get_or_create_season(serial_id, season["season_number"], season["season_name"])
+            for ep in season["episodes"]:
+                await db.add_episode(serial_id, season_id, ep["episode_number"], ep["file_id"], ep["file_type"])
+                total_ep_saved += 1
+
+        await state.clear()
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📺 Seriallar ro'yxati", callback_data="admin_list_serials")],
+            [InlineKeyboardButton(text="⬅️ Boshqaruv", callback_data="admin_kino_management")]
+        ])
+        await callback.message.edit_text(
+            f"✅ <b>Serial muvaffaqiyatli saqlandi!</b>\n\n"
+            f"📺 <b>{data['title']}</b>\n"
+            f"🔢 Kod: <code>{data['code']}</code>\n"
+            f"📊 {len(seasons_data)} fasl · {total_ep_saved} qism bazaga qo'shildi!",
+            reply_markup=kb, parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error saving serial: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Xatolik yuz berdi:</b> {e}\n\nQaytadan urinib ko'ring.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ Boshqaruv", callback_data="admin_kino_management")
+            ]]),
+            parse_mode="HTML"
+        )
+        await state.clear()
+
+# ================== MAVJUD SERIALGA QISM QO'SHISH ==================
+@router.callback_query(F.data == "admin_add_episode")
+async def on_add_episode_start(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_authorized_admin(callback.from_user.id, db):
+        return
+    await state.set_state(AddEpisodeState.waiting_for_serial_code)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        "➕ <b>Mavjud serialga qism qo'shish</b>\n\n"
+        "📺 <b>Serial kodini kiriting:</b>\n\n"
+        "<i>Masalan: 250 (Taxtlar O'yini)</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(AddEpisodeState.waiting_for_serial_code, F.text)
+async def on_add_episode_serial_code(message: Message, state: FSMContext, db: Database):
+    code = message.text.strip()
+    serial = await db.get_serial_by_code(code)
+    if not serial:
+        await message.reply(f"❌ <b>{code}</b> kodli serial topilmadi! Kodni tekshirib qaytadan kiriting.", parse_mode="HTML")
+        return
+
+    await state.update_data(serial_id=serial['id'], serial_title=serial['title'], serial_code=code)
+    seasons = await db.get_seasons(serial['id'])
+
+    if not seasons:
+        await state.set_state(AddEpisodeState.waiting_for_new_season_name)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+        await message.answer(
+            f"📺 <b>{serial['title']}</b> topildi!\n\n"
+            f"Hozircha fasllar yo'q. <b>Fasl nomini kiriting:</b>\n"
+            f"<i>Masalan: 1-fasl</i>",
+            reply_markup=kb, parse_mode="HTML"
+        )
+    else:
+        await state.set_state(AddEpisodeState.waiting_for_season_choice)
+        kb = get_serial_wizard_season_kb(seasons, serial['id'])
+        await message.answer(
+            f"📺 <b>{serial['title']}</b> topildi!\n\n"
+            f"Qaysi faslga qism qo'shmoqchisiz?",
+            reply_markup=kb, parse_mode="HTML"
+        )
+
+@router.callback_query(AddEpisodeState.waiting_for_season_choice, F.data.startswith("wz_serial_pick_season:"))
+async def on_add_episode_pick_season(callback: CallbackQuery, state: FSMContext, db: Database):
+    parts = callback.data.split(":")
+    serial_id = int(parts[1])
+    season_id = int(parts[2])
+    season_number = int(parts[3])
+
+    next_ep = await db.get_next_episode_number(season_id)
+    await state.update_data(season_id=season_id, season_number=season_number, next_episode=next_ep)
+    await state.set_state(AddEpisodeState.waiting_for_episode_video)
+
+    data = await state.get_data()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        f"📺 <b>{data.get('serial_title')}</b>\n\n"
+        f"📂 Fasl tanlandi.\n\n"
+        f"🎬 <b>{next_ep}-qism videosini yuboring:</b>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(AddEpisodeState.waiting_for_season_choice, F.data.startswith("wz_serial_new_season:"))
+async def on_add_episode_new_season(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddEpisodeState.waiting_for_new_season_name)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        "📂 <b>Yangi fasl nomini kiriting:</b>\n\n"
+        "<i>Masalan: 2-fasl, Season 2</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(AddEpisodeState.waiting_for_new_season_name, F.text)
+async def on_add_episode_new_season_name(message: Message, state: FSMContext, db: Database):
+    season_name = message.text.strip()
+    data = await state.get_data()
+    serial_id = data.get("serial_id")
+
+    seasons = await db.get_seasons(serial_id)
+    next_season_number = (max([s['season_number'] for s in seasons]) + 1) if seasons else 1
+
+    season_id = await db.get_or_create_season(serial_id, next_season_number, season_name)
+    await state.update_data(season_id=season_id, season_number=next_season_number, next_episode=1)
+    await state.set_state(AddEpisodeState.waiting_for_episode_video)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await message.answer(
+        f"✅ <b>{season_name}</b> yaratildi!\n\n"
+        f"🎬 <b>1-qism videosini yuboring:</b>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.message(AddEpisodeState.waiting_for_episode_video, F.video | F.document)
+async def on_add_episode_video(message: Message, state: FSMContext, db: Database):
+    data = await state.get_data()
+    if message.video:
+        file_id = message.video.file_id
+        file_type = "video"
+    else:
+        file_id = message.document.file_id
+        file_type = "document"
+
+    serial_id = data["serial_id"]
+    season_id = data["season_id"]
+    next_ep = data["next_episode"]
+
+    await db.add_episode(serial_id, season_id, next_ep, file_id, file_type)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"➕ Yana {next_ep + 1}-qism qo'shish", callback_data="add_ep_more"),
+            InlineKeyboardButton(text="✅ Tugatish", callback_data="add_ep_done")
+        ]
+    ])
+    await state.update_data(next_episode=next_ep + 1)
+    await message.answer(
+        f"✅ <b>{data.get('serial_title')}</b> → <b>{next_ep}-qism</b> muvaffaqiyatli qo'shildi!\n\n"
+        f"Yana qism qo'shasizmi?",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(AddEpisodeState.waiting_for_episode_video, F.data == "add_ep_more")
+async def on_add_ep_more(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    next_ep = data.get("next_episode", 2)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")]])
+    await callback.message.edit_text(
+        f"🎬 <b>{data.get('serial_title')}</b>\n\n"
+        f"<b>{next_ep}-qism videosini yuboring:</b>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@router.callback_query(AddEpisodeState.waiting_for_episode_video, F.data == "add_ep_done")
+async def on_add_ep_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Yana qism qo'shish", callback_data="admin_add_episode")],
+        [InlineKeyboardButton(text="⬅️ Boshqaruv", callback_data="admin_kino_management")]
+    ])
+    await callback.message.edit_text(
+        f"✅ <b>{data.get('serial_title')}</b> serialiga yangi qismlar muvaffaqiyatli qo'shildi!",
+        reply_markup=kb, parse_mode="HTML"
+    )
 
 # ----------------- MAJBURIY KANALLAR -----------------
 @router.callback_query(F.data == "admin_channels")
@@ -1263,19 +1791,97 @@ async def on_reset_settings(callback: CallbackQuery, db: Database):
     await callback.answer("🔄 Barcha matn va tugmalar standart holatga qaytarildi!", show_alert=True)
     await on_admin_settings_menu(callback, db)
 
-# ----------------- EGALIKNI TOPSHIRISH (TRANSFER OWNER) -----------------
+# ----------------- EGALIKNI TOPSHIRISH (TRANSFER OWNER) PAROLLI -----------------
+DEFAULT_TRANSFER_PASSWORD = "admin1234"
+
 @router.callback_query(F.data == "admin_transfer_owner")
 async def on_transfer_owner_start(callback: CallbackQuery, state: FSMContext, db: Database):
     if not await is_owner_user(callback.from_user.id, db):
         await callback.answer("⛔️ Faqat botning Asosiy Egasi (Owner) egalikni o'tkaza oladi!", show_alert=True)
         return
 
-    await state.set_state(TransferOwnerState.waiting_for_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_menu")]])
+    await state.set_state(TransferPasswordState.waiting_for_old_password)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
     await callback.message.edit_text(
-        "👑 <b>Bot egaligini (SuperAdmin) boshqa shaxsga topshirish</b>\n\n"
-        "⚠️ <i>Diqqat! Egalikni topshirganingizdan so'ng, barcha boshqaruv yangi egaga o'tadi!</i>\n\n"
-        "Yangi eganing Telegram ID sini yuboring:",
+        "🔐 <b>Egalikni o'tkazish — Xavfsizlik paroli</b>\n\n"
+        "⚠️ <i>Diqqat! Bu o'ta jiddiy amal. Davom etish uchun maxfiy transfer parolini kiriting:</i>\n\n"
+        "<i>(Dastlabki standart parol: <code>admin1234</code>. Uni 'Transfer parolini o'zgartirish' orqali yangilashingiz mumkin)</i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+@router.message(TransferPasswordState.waiting_for_old_password, F.text)
+async def on_transfer_owner_password_check(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        return
+
+    entered = message.text.strip()
+    saved_password = await db.get_setting("transfer_password", DEFAULT_TRANSFER_PASSWORD)
+    if entered != saved_password:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+        await message.reply("❌ <b>Noto'g'ri parol kiritildi!</b> Qaytadan urinib ko'ring yoki bekor qiling:", reply_markup=kb, parse_mode="HTML")
+        return
+
+    await state.set_state(TransferOwnerState.waiting_for_id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    await message.reply(
+        "✅ <b>Parol tasdiqlandi!</b>\n\n"
+        "👑 <b>Bot egaligini (SuperAdmin) yangi shaxsga topshirish</b>\n\n"
+        "⚠️ <i>Egalik topshirilgach, barcha maxfiy huquqlar yangi egaga o'tadi!</i>\n\n"
+        "Yangi eganing <b>Telegram ID</b> sini yuboring:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "change_transfer_password")
+async def on_change_transfer_password_start(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Faqat Owner uchun!", show_alert=True)
+        return
+    await state.set_state(ChangeTransferPasswordState.waiting_for_current_password)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    await callback.message.edit_text(
+        "🔑 <b>Transfer parolini o'zgartirish</b>\n\n"
+        "Avval <b>joriy parolni</b> kiriting:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+@router.message(ChangeTransferPasswordState.waiting_for_current_password, F.text)
+async def on_change_password_current(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        return
+
+    entered = message.text.strip()
+    saved = await db.get_setting("transfer_password", DEFAULT_TRANSFER_PASSWORD)
+    if entered != saved:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+        await message.reply("❌ <b>Joriy parol noto'g'ri!</b>", reply_markup=kb, parse_mode="HTML")
+        return
+
+    await state.set_state(ChangeTransferPasswordState.waiting_for_new_password)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    await message.reply("✅ Tasdiqlandi!\n\n🔑 Endi <b>yangi parolni</b> kiriting (kamida 4 ta belgi):", reply_markup=kb, parse_mode="HTML")
+
+@router.message(ChangeTransferPasswordState.waiting_for_new_password, F.text)
+async def on_change_password_new(message: Message, state: FSMContext, db: Database):
+    if not await is_owner_user(message.from_user.id, db):
+        await state.clear()
+        return
+
+    new_password = message.text.strip()
+    if len(new_password) < 4:
+        await message.reply("⚠️ Parol kamida 4 ta belgidan iborat bo'lishi kerak!")
+        return
+
+    await db.set_setting("transfer_password", new_password)
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Sozlamalar", callback_data="admin_settings_menu")]])
+    await message.reply(
+        f"✅ <b>Transfer paroli muvaffaqiyatli yangilandi!</b>\n\n"
+        f"Yangi maxfiy parol: <code>{new_password}</code>",
         reply_markup=kb,
         parse_mode="HTML"
     )

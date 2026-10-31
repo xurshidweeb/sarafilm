@@ -15,7 +15,9 @@ from keyboards.inline import (
     get_movie_action_kb,
     get_movie_poster_kb,
     get_movie_not_found_kb,
-    get_mandatory_channels_kb
+    get_mandatory_channels_kb,
+    get_serial_seasons_kb,
+    get_serial_episodes_kb
 )
 from handlers.subscription import check_user_access
 
@@ -47,6 +49,35 @@ def format_movie_caption(movie: dict, channel_tag: str = None) -> str:
         f"Ko'proq kinolar: {tag}\n\n"
         f"🔒 <b>Kod:</b> {movie['code']}\n"
         f"👁 <b>Jami ko'rishlar:</b> {views} ta"
+    )
+
+def format_serial_caption(serial: dict, seasons: list, channel_tag: str = None) -> str:
+    """Format serial post matching the SaraFilm style from screenshot"""
+    lang = serial.get("language") or "O'zbek"
+    quality = serial.get("quality") or "1080p"
+    genre = serial.get("genre") or "Boshqa"
+    country = serial.get("country") or "AQSH"
+    year = serial.get("year") or 2024
+    views = serial.get("views", 0)
+    tag = channel_tag or f"@{config.BOT_USERNAME}"
+    if not tag.startswith("@") and not tag.startswith("http"):
+        tag = f"@{tag}"
+
+    total_episodes = sum(s.get("episode_count", 0) for s in seasons)
+
+    return (
+        f"📺 <b>{serial['title']}</b>\n"
+        f"------------------------\n"
+        f"🌍 <b>Davlat:</b> {country}\n"
+        f"🗣 <b>Til:</b> {lang}\n"
+        f"🎭 <b>Janr:</b> {genre}\n"
+        f"⚡️ <b>Sifat:</b> {quality}\n"
+        f"📅 <b>Yil:</b> {year}\n"
+        f"🔒 <b>Kod:</b> <code>{serial['code']}</code>\n\n"
+        f"📦 <b>Hajmi:</b> {len(seasons)} fasl · {total_episodes} qism\n"
+        f"👁 <b>Ko'rishlar:</b> {views} ta\n\n"
+        f"Ko'proq kinolar: {tag}\n\n"
+        f"⬇️ <b>Ko'rish uchun qismni tanlang:</b>"
     )
 
 @router.message(CommandStart())
@@ -218,6 +249,38 @@ async def send_movie_video_directly(message: Message, bot: Bot, db: Database, co
         logger.error(f"Error sending movie {movie['id']}: {e}")
         await message.answer(f"❌ Kinoni yuklashda xatolik yuz berdi: {e}", reply_markup=get_movie_not_found_kb())
 
+async def send_serial_poster(message: Message, bot: Bot, db: Database, serial: dict):
+    user_id = message.from_user.id
+    has_access, missing = await check_user_access(bot, db, user_id)
+    if not has_access:
+        sub_text = "⚠️ <b>Serialni ko'rish uchun avval homiy kanallarga a'zo bo'ling:</b>"
+        await message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        return
+
+    await db.increment_serial_views(serial["id"])
+    serial["views"] = serial.get("views", 0) + 1
+
+    seasons = await db.get_seasons(serial["id"])
+    channel_tag = await db.get_setting("movie_channel", f"@{config.BOT_USERNAME}")
+    caption = format_serial_caption(serial, seasons, channel_tag=channel_tag)
+    kb = get_serial_seasons_kb(serial, seasons)
+
+    poster_id = serial.get("poster_file_id")
+    if poster_id:
+        try:
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=poster_id,
+                caption=caption,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            return
+        except Exception as e:
+            logger.warning(f"Could not send serial poster: {e}")
+
+    await message.answer(caption, reply_markup=kb, parse_mode="HTML")
+
 async def send_movie_poster(message: Message, bot: Bot, db: Database, code: str):
     user_id = message.from_user.id
     has_access, missing = await check_user_access(bot, db, user_id)
@@ -228,8 +291,13 @@ async def send_movie_poster(message: Message, bot: Bot, db: Database, code: str)
 
     movie = await db.get_movie_by_code(code)
     if not movie:
+        serial = await db.get_serial_by_code(code)
+        if serial:
+            await send_serial_poster(message, bot, db, serial)
+            return
+
         await message.answer(
-            f"❌ <b>#{code}</b> kodli kino topilmadi. Kodni to'g'ri kiritganingizga ishonch hosil qiling.",
+            f"❌ <b>#{code}</b> kodli kino yoki serial topilmadi. Kodni to'g'ri kiritganingizga ishonch hosil qiling.",
             reply_markup=get_movie_not_found_kb(),
             parse_mode="HTML"
         )
@@ -465,8 +533,28 @@ async def on_text_message(message: Message, bot: Bot, db: Database):
 
     results = await db.search_movies(text, limit=10)
     if not results:
+        # Check if there are matching serials
+        serial_results = await db.search_serials(text, limit=10)
+        if serial_results:
+            if len(serial_results) == 1:
+                await send_serial_poster(message, bot, db, serial_results[0])
+                return
+            else:
+                msg = f"🔍 <b>'{text}'</b> bo'yicha topilgan seriallar:\n\n"
+                buttons = []
+                for idx, s in enumerate(serial_results, 1):
+                    msg += f"<b>{idx}. {s['title']}</b>\n— Kod: <code>{s['code']}</code> | 👁 {s.get('views', 0)} ta\n\n"
+                    buttons.append([InlineKeyboardButton(text=f"📺 {idx}. {s['title']}", callback_data=f"open_serial_code:{s['code']}")])
+                buttons.append([
+                    InlineKeyboardButton(text="🔍 Qayta qidirish", switch_inline_query_current_chat=""),
+                    InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")
+                ])
+                msg += "💡 <i>Serialni tanlash uchun quyidagi tugmalardan birini bosing:</i>"
+                await message.answer(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+                return
+
         await message.answer(
-            f"❌ <b>'{text}'</b> nomli kino topilmadi.\nKino kodini kiritib ko'ring yoki boshqa nom yozing.",
+            f"❌ <b>'{text}'</b> nomli kino yoki serial topilmadi.\nKodini kiritib ko'ring yoki boshqa nom yozing.",
             reply_markup=get_movie_not_found_kb(),
             parse_mode="HTML"
         )
@@ -494,3 +582,140 @@ async def on_open_movie_code(callback: CallbackQuery, bot: Bot, db: Database):
     code = callback.data.split(":")[1]
     await send_movie_poster(callback.message, bot, db, code)
     await callback.answer()
+
+@router.callback_query(F.data.startswith("open_serial_code:"))
+async def on_open_serial_code(callback: CallbackQuery, bot: Bot, db: Database):
+    code = callback.data.split(":")[1]
+    serial = await db.get_serial_by_code(code)
+    if serial:
+        await send_serial_poster(callback.message, bot, db, serial)
+    else:
+        await callback.answer("Serial topilmadi!", show_alert=True)
+    await callback.answer()
+
+# ================== SERIAL FOYDALANUVCHI HANDLERLARI ==================
+@router.callback_query(F.data.startswith("serial_seasons:"))
+async def on_serial_seasons_view(callback: CallbackQuery, bot: Bot, db: Database):
+    serial_id = int(callback.data.split(":")[1])
+    serial = await db.get_serial_by_id(serial_id)
+    if not serial:
+        await callback.answer("Serial topilmadi!", show_alert=True)
+        return
+
+    seasons = await db.get_seasons(serial_id)
+    channel_tag = await db.get_setting("movie_channel", f"@{config.BOT_USERNAME}")
+    caption = format_serial_caption(serial, seasons, channel_tag=channel_tag)
+    kb = get_serial_seasons_kb(serial, seasons)
+
+    try:
+        await callback.message.edit_caption(caption=caption, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        try:
+            await callback.message.edit_text(text=caption, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await callback.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("serial_season:"))
+async def on_serial_season_chosen(callback: CallbackQuery, bot: Bot, db: Database):
+    user_id = callback.from_user.id
+    has_access, missing = await check_user_access(bot, db, user_id)
+    if not has_access:
+        sub_text = "⚠️ <b>Serialni ko'rish uchun avval homiy kanallarga a'zo bo'ling:</b>"
+        await callback.message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        await callback.answer()
+        return
+
+    parts = callback.data.split(":")
+    serial_id = int(parts[1])
+    season_id = int(parts[2])
+
+    serial = await db.get_serial_by_id(serial_id)
+    if not serial:
+        await callback.answer("Serial topilmadi!", show_alert=True)
+        return
+
+    episodes = await db.get_episodes(season_id)
+    if not episodes:
+        await callback.answer("Ushbu faslga hali qismlar yuklanmagan!", show_alert=True)
+        return
+
+    seasons = await db.get_seasons(serial_id)
+    chosen_season = next((s for s in seasons if s['id'] == season_id), None)
+    season_name = chosen_season['season_name'] if chosen_season else "Fasl"
+
+    channel_tag = await db.get_setting("movie_channel", f"@{config.BOT_USERNAME}")
+    caption = (
+        f"📺 <b>{serial['title']}</b> | 📂 <b>{season_name}</b>\n"
+        f"------------------------\n"
+        f"⚡️ Sifat: {serial.get('quality', '1080p')} | 🔒 Kod: <code>{serial['code']}</code>\n"
+        f"📊 Jami: {len(episodes)} ta qism\n\n"
+        f"Ko'proq kinolar: {channel_tag}\n\n"
+        f"⬇️ <b>Tomosha qilish uchun kerakli qism raqamini bosing:</b>"
+    )
+    kb = get_serial_episodes_kb(serial_id, season_id, episodes)
+
+    try:
+        await callback.message.edit_caption(caption=caption, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        try:
+            await callback.message.edit_text(text=caption, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await callback.message.answer(caption, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("serial_ep:"))
+async def on_serial_ep_chosen(callback: CallbackQuery, bot: Bot, db: Database):
+    user_id = callback.from_user.id
+    has_access, missing = await check_user_access(bot, db, user_id)
+    if not has_access:
+        sub_text = "⚠️ <b>Qismni ko'rish uchun avval homiy kanallarga a'zo bo'ling:</b>"
+        await callback.message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
+        await callback.answer()
+        return
+
+    parts = callback.data.split(":")
+    serial_id = int(parts[1])
+    season_id = int(parts[2])
+    episode_number = int(parts[3])
+
+    ep = await db.get_episode(season_id, episode_number)
+    if not ep:
+        await callback.answer("Qism topilmadi!", show_alert=True)
+        return
+
+    serial = await db.get_serial_by_id(serial_id)
+    seasons = await db.get_seasons(serial_id)
+    chosen_season = next((s for s in seasons if s['id'] == season_id), None)
+    season_name = chosen_season['season_name'] if chosen_season else "Fasl"
+
+    channel_tag = await db.get_setting("movie_channel", f"@{config.BOT_USERNAME}")
+    caption = (
+        f"🎬 <b>{serial['title']}</b>\n"
+        f"📂 <b>{season_name}</b> — <b>{episode_number}-qism</b>\n\n"
+        f"⚡️ Sifat: {serial.get('quality', '1080p')} | 🔒 Kod: <code>{serial['code']}</code>\n"
+        f"Ko'proq kinolar: {channel_tag}\n\n"
+        f"🍿 <i>Maroqli tomosha tilaymiz!</i>"
+    )
+
+    nav_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📚 Boshqa qismlar", callback_data=f"serial_season:{serial_id}:{season_id}")],
+        [InlineKeyboardButton(text="📁 Fasllar ro'yxati", callback_data=f"serial_seasons:{serial_id}")],
+        [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="back_to_main")]
+    ])
+
+    try:
+        if ep.get("file_type") == "video":
+            await bot.send_video(chat_id=callback.message.chat.id, video=ep["file_id"], caption=caption, reply_markup=nav_kb, parse_mode="HTML")
+        elif ep.get("file_type") == "photo":
+            await bot.send_photo(chat_id=callback.message.chat.id, photo=ep["file_id"], caption=caption, reply_markup=nav_kb, parse_mode="HTML")
+        else:
+            await bot.send_document(chat_id=callback.message.chat.id, document=ep["file_id"], caption=caption, reply_markup=nav_kb, parse_mode="HTML")
+        await callback.answer("🍿 Maroqli tomosha!")
+    except Exception as e:
+        logger.error(f"Error sending serial episode: {e}")
+        await callback.answer("Qismni yuklashda xatolik yuz berdi.", show_alert=True)
+
+@router.callback_query(F.data.startswith("serial_save:"))
+async def on_serial_save_toggle(callback: CallbackQuery):
+    await callback.answer("⭐ Serial saqlandi!", show_alert=False)

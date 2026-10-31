@@ -201,15 +201,11 @@ def get_confirm_movie_kb() -> InlineKeyboardMarkup:
     ])
 
 def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
-    """Admin panel main keyboard with strict role separation"""
+    """Admin panel main keyboard with clean layout and strict role separation"""
     buttons = [
         [
             InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stats"),
-            InlineKeyboardButton(text="🎬 Kino qo'shish", callback_data="admin_add_movie")
-        ],
-        [
-            InlineKeyboardButton(text="🗑 Kino o'chirish", callback_data="admin_delete_movie"),
-            InlineKeyboardButton(text="📋 Kinolar ro'yxati", callback_data="admin_list_movies")
+            InlineKeyboardButton(text="🎬 Kino & Serial", callback_data="admin_kino_management")
         ],
         [
             InlineKeyboardButton(text="📢 Majburiy kanallar", callback_data="admin_channels"),
@@ -224,10 +220,7 @@ def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings"),
-                InlineKeyboardButton(text="⚙️ Matn & Tugmalar", callback_data="admin_settings_menu")
-            ],
-            [
-                InlineKeyboardButton(text="👑 Egalikni o'tkazish (Transfer Owner)", callback_data="admin_transfer_owner")
+                InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin_settings_menu")
             ]
         ])
     buttons.append([
@@ -273,7 +266,7 @@ def get_confirm_revoke_kb(user_id: int) -> InlineKeyboardMarkup:
 
 
 def get_admin_settings_kb() -> InlineKeyboardMarkup:
-    """Settings menu for editing bot texts and buttons"""
+    """Settings menu for editing bot texts, buttons, and owner transfer"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎭 Janrlar ro'yxati (Sozlash)", callback_data="admin_manage_genres")],
         [InlineKeyboardButton(text="🚩 Tillar ro'yxati (Sozlash)", callback_data="admin_manage_langs")],
@@ -282,6 +275,8 @@ def get_admin_settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📢 Kanal/Reklama tegi (postlarda)", callback_data="edit_setting:movie_channel")],
         [InlineKeyboardButton(text="🔘 Asosiy menyu tugmalari", callback_data="admin_edit_buttons_menu")],
         [InlineKeyboardButton(text="🔄 Barcha sozlamalarni tiklash (Reset)", callback_data="reset_all_settings")],
+        [InlineKeyboardButton(text="👑 Egalikni o'tkazish 🔐", callback_data="admin_transfer_owner")],
+        [InlineKeyboardButton(text="🔑 Transfer parolini o'zgartirish", callback_data="change_transfer_password")],
         [InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")]
     ])
 
@@ -405,5 +400,101 @@ def get_manage_langs_kb(langs: List[str]) -> InlineKeyboardMarkup:
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton(text="⬅️ Sozlamalar", callback_data="admin_settings_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_kino_management_kb() -> InlineKeyboardMarkup:
+    """Kino & Serial boshqaruvi submenu"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎬 Yangi kino qo'shish", callback_data="admin_add_movie"),
+            InlineKeyboardButton(text="📺 Yangi serial qo'shish", callback_data="admin_add_serial")
+        ],
+        [
+            InlineKeyboardButton(text="➕ Serialga qism qo'shish", callback_data="admin_add_episode")
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Kino/Serial o'chirish", callback_data="admin_delete_movie"),
+            InlineKeyboardButton(text="📋 Kinolar ro'yxati", callback_data="admin_list_movies")
+        ],
+        [
+            InlineKeyboardButton(text="📺 Seriallar ro'yxati", callback_data="admin_list_serials")
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")
+        ]
+    ])
+
+
+def get_serial_seasons_kb(serial: dict, seasons: list) -> InlineKeyboardMarkup:
+    """User: season selection keyboard for a serial (matches SaraFilm layout)"""
+    buttons = []
+    row = []
+    for s in seasons:
+        ep_count = s.get('episode_count', 0)
+        text = f"{s['season_name']} · {ep_count} qism"
+        btn = InlineKeyboardButton(text=text, callback_data=f"serial_season:{serial['id']}:{s['id']}")
+        row.append(btn)
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([
+        InlineKeyboardButton(text="⭐ Saqlash", callback_data=f"serial_save:{serial['id']}"),
+        InlineKeyboardButton(text="↗️ Ulashish", switch_inline_query=serial['title'])
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="🔍 Qidirish", switch_inline_query_current_chat=""),
+        InlineKeyboardButton(text="⬅️ Ortga", callback_data="back_to_main")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_serial_episodes_kb(serial_id: int, season_id: int, episodes: list) -> InlineKeyboardMarkup:
+    """User: episode number selection keyboard (1, 2, 3...)"""
+    buttons = []
+    row = []
+    for ep in episodes:
+        btn = InlineKeyboardButton(
+            text=str(ep['episode_number']),
+            callback_data=f"serial_ep:{serial_id}:{season_id}:{ep['episode_number']}"
+        )
+        row.append(btn)
+        if len(row) == 5:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([
+        InlineKeyboardButton(text="📚 Fasllar", callback_data=f"serial_seasons:{serial_id}")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="⭐ Saqlash", callback_data=f"serial_save:{serial_id}"),
+        InlineKeyboardButton(text="↗️ Ulashish", switch_inline_query_current_chat="")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="🔍 Qidirish", switch_inline_query_current_chat=""),
+        InlineKeyboardButton(text="⬅️ Ortga", callback_data="back_to_main")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_serial_wizard_season_kb(seasons: list, serial_id: int) -> InlineKeyboardMarkup:
+    """Admin: choose which season to add episode to"""
+    buttons = []
+    for s in seasons:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📂 {s['season_name']} ({s.get('episode_count', 0)} qism)",
+                callback_data=f"wz_serial_pick_season:{serial_id}:{s['id']}:{s['season_number']}"
+            )
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Yangi fasl qo'shish", callback_data=f"wz_serial_new_season:{serial_id}")
+    ])
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_kino_management")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

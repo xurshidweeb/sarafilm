@@ -159,6 +159,51 @@ class PostgresDatabase:
                 for l in defaults:
                     await conn.execute("INSERT INTO languages (name) VALUES ($1) ON CONFLICT DO NOTHING;", l)
 
+            # Serials table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS serials (
+                    id SERIAL PRIMARY KEY,
+                    code TEXT UNIQUE NOT NULL,
+                    title TEXT NOT NULL,
+                    poster_file_id TEXT,
+                    poster_url TEXT,
+                    language TEXT DEFAULT 'O''zbek',
+                    genre TEXT DEFAULT 'Boshqa',
+                    country TEXT DEFAULT 'AQSH',
+                    year INTEGER DEFAULT 2024,
+                    quality TEXT DEFAULT '1080p',
+                    views INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # Seasons table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS seasons (
+                    id SERIAL PRIMARY KEY,
+                    serial_id INTEGER NOT NULL REFERENCES serials(id) ON DELETE CASCADE,
+                    season_number INTEGER NOT NULL,
+                    season_name TEXT NOT NULL DEFAULT '1-fasl',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(serial_id, season_number)
+                );
+            """)
+
+            # Episodes table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS episodes (
+                    id SERIAL PRIMARY KEY,
+                    serial_id INTEGER NOT NULL REFERENCES serials(id) ON DELETE CASCADE,
+                    season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                    episode_number INTEGER NOT NULL,
+                    file_id TEXT NOT NULL,
+                    file_type TEXT DEFAULT 'video',
+                    views INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(season_id, episode_number)
+                );
+            """)
+
         logger.info("Neon PostgreSQL Database initialized successfully.")
 
     # ------------------ USERS ------------------
@@ -615,3 +660,124 @@ class PostgresDatabase:
         async with pool.acquire() as conn:
             status = await conn.execute("DELETE FROM languages WHERE name = $1;", name.strip())
             return not status.endswith(" 0")
+
+    # ================== SERIALS ==================
+    async def add_serial(self, code: str, title: str, poster_file_id: str, poster_url: str,
+                         language: str, genre: str, country: str, year: int, quality: str) -> int:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            serial_id = await conn.fetchval("""
+                INSERT INTO serials (code, title, poster_file_id, poster_url, language, genre, country, year, quality)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT(code) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    poster_file_id = EXCLUDED.poster_file_id,
+                    poster_url = EXCLUDED.poster_url,
+                    language = EXCLUDED.language,
+                    genre = EXCLUDED.genre,
+                    country = EXCLUDED.country,
+                    year = EXCLUDED.year,
+                    quality = EXCLUDED.quality
+                RETURNING id;
+            """, code, title, poster_file_id, poster_url, language, genre, country, year, quality)
+            return serial_id
+
+    async def get_serial_by_code(self, code: str) -> Optional[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM serials WHERE code = $1;", code)
+            return dict(row) if row else None
+
+    async def get_serial_by_id(self, serial_id: int) -> Optional[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM serials WHERE id = $1;", serial_id)
+            return dict(row) if row else None
+
+    async def get_all_serials(self, limit: int = 50) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM serials ORDER BY created_at DESC LIMIT $1;", limit)
+            return [dict(r) for r in rows]
+
+    async def search_serials(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM serials WHERE LOWER(title) LIKE LOWER($1) OR code = $2
+                ORDER BY views DESC LIMIT $3;
+            """, f"%{query}%", query, limit)
+            return [dict(r) for r in rows]
+
+    async def get_or_create_season(self, serial_id: int, season_number: int, season_name: str) -> int:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id FROM seasons WHERE serial_id = $1 AND season_number = $2;",
+                serial_id, season_number
+            )
+            if row:
+                return row['id']
+            season_id = await conn.fetchval("""
+                INSERT INTO seasons (serial_id, season_number, season_name)
+                VALUES ($1, $2, $3) RETURNING id;
+            """, serial_id, season_number, season_name)
+            return season_id
+
+    async def get_seasons(self, serial_id: int) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT s.*, COUNT(e.id) as episode_count
+                FROM seasons s
+                LEFT JOIN episodes e ON e.season_id = s.id
+                WHERE s.serial_id = $1
+                GROUP BY s.id
+                ORDER BY s.season_number ASC;
+            """, serial_id)
+            return [dict(r) for r in rows]
+
+    async def add_episode(self, serial_id: int, season_id: int, episode_number: int,
+                          file_id: str, file_type: str = 'video') -> int:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            ep_id = await conn.fetchval("""
+                INSERT INTO episodes (serial_id, season_id, episode_number, file_id, file_type)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT(season_id, episode_number) DO UPDATE SET file_id = EXCLUDED.file_id, file_type = EXCLUDED.file_type
+                RETURNING id;
+            """, serial_id, season_id, episode_number, file_id, file_type)
+            return ep_id
+
+    async def get_episodes(self, season_id: int) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM episodes WHERE season_id = $1 ORDER BY episode_number ASC;
+            """, season_id)
+            return [dict(r) for r in rows]
+
+    async def get_episode(self, season_id: int, episode_number: int) -> Optional[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM episodes WHERE season_id = $1 AND episode_number = $2;
+            """, season_id, episode_number)
+            return dict(row) if row else None
+
+    async def get_next_episode_number(self, season_id: int) -> int:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            max_ep = await conn.fetchval("SELECT MAX(episode_number) FROM episodes WHERE season_id = $1;", season_id)
+            return (max_ep or 0) + 1
+
+    async def increment_serial_views(self, serial_id: int):
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE serials SET views = views + 1 WHERE id = $1;", serial_id)
+
+    async def delete_serial_by_code(self, code: str) -> bool:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM serials WHERE code = $1;", code)
+            return result != "DELETE 0"
