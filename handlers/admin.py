@@ -15,6 +15,7 @@ from keyboards.inline import (
     get_admin_main_kb,
     get_confirm_movie_kb,
     get_admin_settings_kb,
+    get_security_management_kb,
     get_edit_buttons_kb,
     get_genre_selector_kb,
     get_lang_selector_kb,
@@ -1226,7 +1227,7 @@ async def on_manage_admins(callback: CallbackQuery, db: Database):
         kb_buttons.append([
             InlineKeyboardButton(text=f"🗑 O'chirish: {a['full_name'][:15]}", callback_data=f"del_admin:{a['user_id']}")
         ])
-    kb_buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_menu")])
+    kb_buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_security_panel")])
 
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), parse_mode="HTML")
 
@@ -1266,7 +1267,7 @@ async def on_admin_id_received(message: Message, state: FSMContext, bot: Bot, db
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="👥 Adminlar boshqaruvi", callback_data="admin_manage_admins"),
-        InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")
+        InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_security_panel")
     ]])
     await message.reply(f"✅ <b>{name}</b> (ID: <code>{new_admin_id}</code>) admin sifatida saqlandi!", reply_markup=kb, parse_mode="HTML")
 
@@ -1643,7 +1644,7 @@ async def on_card_settings(callback: CallbackQuery, state: FSMContext, db: Datab
         await callback.answer("⛔️ Karta sozlash faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
     await state.set_state(CardSettingState.waiting_for_number)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_menu")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
     await callback.message.edit_text(
         f"💳 <b>Hozirgi karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
         f"Yangi karta raqamini yuboring (masalan: <code>8600 1234 5678 9012</code>):",
@@ -1672,6 +1673,7 @@ async def on_card_holder_set(message: Message, state: FSMContext, db: Database):
     config.CARD_HOLDER = message.text.strip()
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin_settings_menu"),
         InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")
     ]])
     await message.reply(
@@ -1682,24 +1684,17 @@ async def on_card_holder_set(message: Message, state: FSMContext, db: Database):
         parse_mode="HTML"
     )
 
-# ----------------- SOZLAMALAR (MATN VA TUGMALAR) -----------------
+# ----------------- SOZLAMALAR -----------------
 @router.callback_query(F.data == "admin_settings_menu")
 async def on_admin_settings_menu(callback: CallbackQuery, db: Database):
     if not await is_owner_user(callback.from_user.id, db):
         await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
 
-    settings = await db.get_all_settings()
-    start_preview = (settings.get("start_text") or "Standart matn")[:60] + "..."
-    premium_preview = (settings.get("premium_text") or "Standart matn")[:60] + "..."
-    channel_preview = settings.get("movie_channel") or f"@{config.BOT_USERNAME}"
-
     text = (
-        "⚙️ <b>Bot Matnlari va Tugmalari Sozlamalari:</b>\n\n"
-        f"📝 <b>Start xabari:</b> <i>{start_preview}</i>\n"
-        f"💎 <b>Obuna xabari:</b> <i>{premium_preview}</i>\n"
-        f"📢 <b>Kanal tegi (postlarda):</b> <code>{channel_preview}</code>\n\n"
-        "O'zgartirmoqchi bo'lgan parametrni tanlang:"
+        "⚙️ <b>Sozlamalar paneli</b>\n\n"
+        f"💳 <b>Hozirgi karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
+        "Kerakli bo'limni tanlang:"
     )
     await callback.message.edit_text(text, reply_markup=get_admin_settings_kb(), parse_mode="HTML")
 
@@ -1791,27 +1786,26 @@ async def on_reset_settings(callback: CallbackQuery, db: Database):
     await callback.answer("🔄 Barcha matn va tugmalar standart holatga qaytarildi!", show_alert=True)
     await on_admin_settings_menu(callback, db)
 
-# ----------------- EGALIKNI TOPSHIRISH (TRANSFER OWNER) PAROLLI -----------------
+# ----------------- ADMIN VA EGALIK BOSHQARUVI (XAVFSIZLIK PAROLLI) -----------------
 DEFAULT_TRANSFER_PASSWORD = "admin1234"
 
-@router.callback_query(F.data == "admin_transfer_owner")
-async def on_transfer_owner_start(callback: CallbackQuery, state: FSMContext, db: Database):
+@router.callback_query(F.data.in_(["admin_security_entry", "admin_transfer_owner"]))
+async def on_security_entry(callback: CallbackQuery, state: FSMContext, db: Database):
     if not await is_owner_user(callback.from_user.id, db):
-        await callback.answer("⛔️ Faqat botning Asosiy Egasi (Owner) egalikni o'tkaza oladi!", show_alert=True)
+        await callback.answer("⛔️ Faqat botning Asosiy Egasi (Owner) uchun!", show_alert=True)
         return
 
     await state.set_state(TransferPasswordState.waiting_for_old_password)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
     await callback.message.edit_text(
-        "🔐 <b>Egalikni o'tkazish — Xavfsizlik paroli</b>\n\n"
-        "⚠️ <i>Diqqat! Bu o'ta jiddiy amal. Davom etish uchun maxfiy transfer parolini kiriting:</i>\n\n"
-        "<i>(Dastlabki standart parol: <code>admin1234</code>. Uni 'Transfer parolini o'zgartirish' orqali yangilashingiz mumkin)</i>",
+        "🔐 <b>Admin boshqaruvi — Xavfsizlik</b>\n\n"
+        "Davom etish uchun maxfiy parolni kiriting:",
         reply_markup=kb,
         parse_mode="HTML"
     )
 
 @router.message(TransferPasswordState.waiting_for_old_password, F.text)
-async def on_transfer_owner_password_check(message: Message, state: FSMContext, db: Database):
+async def on_security_password_check(message: Message, state: FSMContext, db: Database):
     if not await is_owner_user(message.from_user.id, db):
         await state.clear()
         return
@@ -1820,13 +1814,40 @@ async def on_transfer_owner_password_check(message: Message, state: FSMContext, 
     saved_password = await db.get_setting("transfer_password", DEFAULT_TRANSFER_PASSWORD)
     if entered != saved_password:
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
-        await message.reply("❌ <b>Noto'g'ri parol kiritildi!</b> Qaytadan urinib ko'ring yoki bekor qiling:", reply_markup=kb, parse_mode="HTML")
+        await message.reply("❌ <b>Noto'g'ri parol!</b> Qaytadan urinib ko'ring yoki bekor qiling:", reply_markup=kb, parse_mode="HTML")
+        return
+
+    await state.clear()
+    await message.reply(
+        "🔐 <b>Admin va egalik boshqaruvi</b>\n\n"
+        "Kerakli bo'limni tanlang:",
+        reply_markup=get_security_management_kb(),
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "admin_security_panel")
+async def on_security_panel(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Bu bo'lim faqat Asosiy Admin (Owner) uchun!", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        "🔐 <b>Admin va egalik boshqaruvi</b>\n\n"
+        "Kerakli bo'limni tanlang:",
+        reply_markup=get_security_management_kb(),
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "admin_transfer_owner_direct")
+async def on_transfer_owner_start(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not await is_owner_user(callback.from_user.id, db):
+        await callback.answer("⛔️ Faqat botning Asosiy Egasi (Owner) egalikni o'tkaza oladi!", show_alert=True)
         return
 
     await state.set_state(TransferOwnerState.waiting_for_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
-    await message.reply(
-        "✅ <b>Parol tasdiqlandi!</b>\n\n"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_security_panel")]])
+    await callback.message.edit_text(
         "👑 <b>Bot egaligini (SuperAdmin) yangi shaxsga topshirish</b>\n\n"
         "⚠️ <i>Egalik topshirilgach, barcha maxfiy huquqlar yangi egaga o'tadi!</i>\n\n"
         "Yangi eganing <b>Telegram ID</b> sini yuboring:",
@@ -1840,9 +1861,9 @@ async def on_change_transfer_password_start(callback: CallbackQuery, state: FSMC
         await callback.answer("⛔️ Faqat Owner uchun!", show_alert=True)
         return
     await state.set_state(ChangeTransferPasswordState.waiting_for_current_password)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_security_panel")]])
     await callback.message.edit_text(
-        "🔑 <b>Transfer parolini o'zgartirish</b>\n\n"
+        "🔑 <b>Parolni o'zgartirish</b>\n\n"
         "Avval <b>joriy parolni</b> kiriting:",
         reply_markup=kb,
         parse_mode="HTML"
@@ -1857,12 +1878,12 @@ async def on_change_password_current(message: Message, state: FSMContext, db: Da
     entered = message.text.strip()
     saved = await db.get_setting("transfer_password", DEFAULT_TRANSFER_PASSWORD)
     if entered != saved:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_security_panel")]])
         await message.reply("❌ <b>Joriy parol noto'g'ri!</b>", reply_markup=kb, parse_mode="HTML")
         return
 
     await state.set_state(ChangeTransferPasswordState.waiting_for_new_password)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_security_panel")]])
     await message.reply("✅ Tasdiqlandi!\n\n🔑 Endi <b>yangi parolni</b> kiriting (kamida 4 ta belgi):", reply_markup=kb, parse_mode="HTML")
 
 @router.message(ChangeTransferPasswordState.waiting_for_new_password, F.text)
@@ -1878,10 +1899,9 @@ async def on_change_password_new(message: Message, state: FSMContext, db: Databa
 
     await db.set_setting("transfer_password", new_password)
     await state.clear()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Sozlamalar", callback_data="admin_settings_menu")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_security_panel")]])
     await message.reply(
-        f"✅ <b>Transfer paroli muvaffaqiyatli yangilandi!</b>\n\n"
-        f"Yangi maxfiy parol: <code>{new_password}</code>",
+        f"✅ <b>Parol muvaffaqiyatli yangilandi!</b>",
         reply_markup=kb,
         parse_mode="HTML"
     )

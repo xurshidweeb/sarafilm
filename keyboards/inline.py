@@ -215,11 +215,7 @@ def get_admin_main_kb(is_owner: bool = False) -> InlineKeyboardMarkup:
     if is_owner:
         buttons.extend([
             [
-                InlineKeyboardButton(text="👥 Adminlar boshqaruvi", callback_data="admin_manage_admins"),
-                InlineKeyboardButton(text="💎 Premium a'zolar", callback_data="admin_premium_users")
-            ],
-            [
-                InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings"),
+                InlineKeyboardButton(text="💎 Premium a'zolar", callback_data="admin_premium_users"),
                 InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin_settings_menu")
             ]
         ])
@@ -266,18 +262,22 @@ def get_confirm_revoke_kb(user_id: int) -> InlineKeyboardMarkup:
 
 
 def get_admin_settings_kb() -> InlineKeyboardMarkup:
-    """Settings menu for editing bot texts, buttons, and owner transfer"""
+    """Settings menu for bot settings"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎭 Janrlar ro'yxati (Sozlash)", callback_data="admin_manage_genres")],
         [InlineKeyboardButton(text="🚩 Tillar ro'yxati (Sozlash)", callback_data="admin_manage_langs")],
-        [InlineKeyboardButton(text="📝 Start xabari matni", callback_data="edit_setting:start_text")],
-        [InlineKeyboardButton(text="💎 Obuna xabari matni", callback_data="edit_setting:premium_text")],
-        [InlineKeyboardButton(text="📢 Kanal/Reklama tegi (postlarda)", callback_data="edit_setting:movie_channel")],
-        [InlineKeyboardButton(text="🔘 Asosiy menyu tugmalari", callback_data="admin_edit_buttons_menu")],
-        [InlineKeyboardButton(text="🔄 Barcha sozlamalarni tiklash (Reset)", callback_data="reset_all_settings")],
-        [InlineKeyboardButton(text="👑 Egalikni o'tkazish 🔐", callback_data="admin_transfer_owner")],
-        [InlineKeyboardButton(text="🔑 Transfer parolini o'zgartirish", callback_data="change_transfer_password")],
+        [InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings")],
+        [InlineKeyboardButton(text="🔐 Admin boshqaruvi", callback_data="admin_security_entry")],
         [InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")]
+    ])
+
+def get_security_management_kb() -> InlineKeyboardMarkup:
+    """Security and owner management keyboard with 3 primary options"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Admin boshqaruvi", callback_data="admin_manage_admins")],
+        [InlineKeyboardButton(text="👑 Egalikni o'zgartirish", callback_data="admin_transfer_owner_direct")],
+        [InlineKeyboardButton(text="🔑 Parolni o'zgartirish", callback_data="change_transfer_password")],
+        [InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_settings_menu")]
     ])
 
 def get_edit_buttons_kb() -> InlineKeyboardMarkup:
