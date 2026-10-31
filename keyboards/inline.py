@@ -266,15 +266,15 @@ def get_admin_settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎭 Janrlar ro'yxati (Sozlash)", callback_data="admin_manage_genres")],
         [InlineKeyboardButton(text="🚩 Tillar ro'yxati (Sozlash)", callback_data="admin_manage_langs")],
-        [InlineKeyboardButton(text="💳 Karta sozlash", callback_data="admin_card_settings")],
-        [InlineKeyboardButton(text="🔐 Admin boshqaruvi", callback_data="admin_security_entry")],
+        [InlineKeyboardButton(text="🔐 Admin & Xavfsizlik boshqaruvi", callback_data="admin_security_entry")],
         [InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")]
     ])
 
 def get_security_management_kb() -> InlineKeyboardMarkup:
-    """Security and owner management keyboard with 3 primary options"""
+    """Security, owner, and payment management keyboard protected by password"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Admin boshqaruvi", callback_data="admin_manage_admins")],
+        [InlineKeyboardButton(text="💳 Karta ma'lumotlarini sozlash", callback_data="admin_card_settings")],
         [InlineKeyboardButton(text="👑 Egalikni o'zgartirish", callback_data="admin_transfer_owner_direct")],
         [InlineKeyboardButton(text="🔑 Parolni o'zgartirish", callback_data="change_transfer_password")],
         [InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_settings_menu")]

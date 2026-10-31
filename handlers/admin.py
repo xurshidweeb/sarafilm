@@ -1644,7 +1644,7 @@ async def on_card_settings(callback: CallbackQuery, state: FSMContext, db: Datab
         await callback.answer("⛔️ Karta sozlash faqat Asosiy Admin (Owner) uchun!", show_alert=True)
         return
     await state.set_state(CardSettingState.waiting_for_number)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_settings_menu")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_security_panel")]])
     await callback.message.edit_text(
         f"💳 <b>Hozirgi karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
         f"Yangi karta raqamini yuboring (masalan: <code>8600 1234 5678 9012</code>):",
@@ -1673,8 +1673,7 @@ async def on_card_holder_set(message: Message, state: FSMContext, db: Database):
     config.CARD_HOLDER = message.text.strip()
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="admin_settings_menu"),
-        InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin_menu")
+        InlineKeyboardButton(text="⬅️ Ortga", callback_data="admin_security_panel")
     ]])
     await message.reply(
         f"✅ <b>Karta ma'lumotlari muvaffaqiyatli yangilandi!</b>\n\n"
@@ -1693,7 +1692,6 @@ async def on_admin_settings_menu(callback: CallbackQuery, db: Database):
 
     text = (
         "⚙️ <b>Sozlamalar paneli</b>\n\n"
-        f"💳 <b>Hozirgi karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
         "Kerakli bo'limni tanlang:"
     )
     await callback.message.edit_text(text, reply_markup=get_admin_settings_kb(), parse_mode="HTML")
@@ -1819,7 +1817,8 @@ async def on_security_password_check(message: Message, state: FSMContext, db: Da
 
     await state.clear()
     await message.reply(
-        "🔐 <b>Admin va egalik boshqaruvi</b>\n\n"
+        "🔐 <b>Admin & Xavfsizlik boshqaruvi</b>\n\n"
+        f"💳 <b>Joriy karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
         "Kerakli bo'limni tanlang:",
         reply_markup=get_security_management_kb(),
         parse_mode="HTML"
@@ -1833,7 +1832,8 @@ async def on_security_panel(callback: CallbackQuery, state: FSMContext, db: Data
 
     await state.clear()
     await callback.message.edit_text(
-        "🔐 <b>Admin va egalik boshqaruvi</b>\n\n"
+        "🔐 <b>Admin & Xavfsizlik boshqaruvi</b>\n\n"
+        f"💳 <b>Joriy karta:</b> <code>{config.CARD_NUMBER}</code> ({config.CARD_HOLDER})\n\n"
         "Kerakli bo'limni tanlang:",
         reply_markup=get_security_management_kb(),
         parse_mode="HTML"
