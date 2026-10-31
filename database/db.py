@@ -818,4 +818,36 @@ class Database:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def get_top_serials(self, limit: int = 25) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM serials ORDER BY views DESC LIMIT ?", (limit,))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_filtered_serials(self, genre: Optional[str] = None, country: Optional[str] = None,
+                                   language: Optional[str] = None, year: Optional[int] = None,
+                                   limit: int = 25) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            query = "SELECT * FROM serials WHERE 1=1"
+            params = []
+            if genre:
+                params.append(f"%{genre}%")
+                query += " AND genre LIKE ?"
+            if country:
+                params.append(f"%{country}%")
+                query += " AND country LIKE ?"
+            if language:
+                params.append(f"%{language}%")
+                query += " AND language LIKE ?"
+            if year:
+                params.append(year)
+                query += " AND year = ?"
+            params.append(limit)
+            query += " ORDER BY views DESC LIMIT ?"
+            cursor = await db.execute(query, tuple(params))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
 

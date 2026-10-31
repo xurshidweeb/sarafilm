@@ -95,7 +95,7 @@ async def on_start(message: Message, bot: Bot, db: Database):
         await message.answer(sub_text, reply_markup=get_mandatory_channels_kb(missing), parse_mode="HTML")
         return
 
-    # Deep-link parameter (e.g. /start watch_5555 or /start save_5555 or /start 5555)
+    # Deep-link parameter (e.g. /start watch_5555 or /start save_5555 or /start 5555 or /start serial_250)
     args = message.text.split(maxsplit=1)
     if len(args) > 1:
         param = args[1].strip()
@@ -103,12 +103,20 @@ async def on_start(message: Message, bot: Bot, db: Database):
             code = param.replace("watch_", "").strip()
             await send_movie_video_directly(message, bot, db, code)
             return
+        elif param.startswith("serial_"):
+            code = param.replace("serial_", "").strip()
+            serial = await db.get_serial_by_code(code)
+            if serial:
+                await send_serial_poster(message, bot, db, serial)
+            else:
+                await send_movie_poster(message, bot, db, code)
+            return
         elif param.startswith("save_"):
             code = param.replace("save_", "").strip()
             await handle_deep_link_save(message, bot, db, code)
             return
         elif param.isdigit():
-            # User opened t.me/bot?start=5555 directly -> Send video immediately!
+            # User opened t.me/bot?start=5555 directly -> Send video or serial immediately!
             await send_movie_video_directly(message, bot, db, param)
             return
 
@@ -219,8 +227,13 @@ async def send_movie_video_directly(message: Message, bot: Bot, db: Database, co
 
     movie = await db.get_movie_by_code(code)
     if not movie:
+        serial = await db.get_serial_by_code(code)
+        if serial:
+            await send_serial_poster(message, bot, db, serial)
+            return
+
         await message.answer(
-            f"❌ <b>#{code}</b> kodli kino topilmadi. Kodni to'g'ri kiritganingizga ishonch hosil qiling.",
+            f"❌ <b>#{code}</b> kodli kino yoki serial topilmadi. Kodni to'g'ri kiritganingizga ishonch hosil qiling.",
             reply_markup=get_movie_not_found_kb(),
             parse_mode="HTML"
         )

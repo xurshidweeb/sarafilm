@@ -781,3 +781,33 @@ class PostgresDatabase:
         async with pool.acquire() as conn:
             result = await conn.execute("DELETE FROM serials WHERE code = $1;", code)
             return result != "DELETE 0"
+
+    async def get_top_serials(self, limit: int = 25) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM serials ORDER BY views DESC LIMIT $1;", limit)
+            return [dict(r) for r in rows]
+
+    async def get_filtered_serials(self, genre: Optional[str] = None, country: Optional[str] = None,
+                                   language: Optional[str] = None, year: Optional[int] = None,
+                                   limit: int = 25) -> List[Dict[str, Any]]:
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            query = "SELECT * FROM serials WHERE 1=1"
+            params = []
+            if genre:
+                params.append(f"%{genre}%")
+                query += f" AND genre ILIKE ${len(params)}"
+            if country:
+                params.append(f"%{country}%")
+                query += f" AND country ILIKE ${len(params)}"
+            if language:
+                params.append(f"%{language}%")
+                query += f" AND language ILIKE ${len(params)}"
+            if year:
+                params.append(year)
+                query += f" AND year = ${len(params)}"
+            params.append(limit)
+            query += f" ORDER BY views DESC LIMIT ${len(params)};"
+            rows = await conn.fetch(query, *params)
+            return [dict(r) for r in rows]
